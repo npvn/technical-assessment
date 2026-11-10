@@ -5,26 +5,16 @@ import {
   ApiCreatedResponse,
   ApiResponse,
   ApiTags,
-  getSchemaPath,
-  type ApiResponseOptions,
 } from '@nestjs/swagger';
 import { isUUID } from 'class-validator';
 import type { Response } from 'express';
 import { ProblemException, validationProblem } from '../common/problem.js';
+import { ProblemDto, problemResponse } from '../common/problem.dto.js';
 import { parseInstant } from '../scheduling/index.js';
 import { AppointmentReader } from './appointment.reader.js';
-import { AppointmentResponseDto, CreateAppointmentDto, ProblemDto } from './appointment.dto.js';
+import { AppointmentResponseDto, CreateAppointmentDto } from './appointment.dto.js';
 import { BookingService } from './booking.service.js';
 import { toAppointmentResponse, toHttpAnswer, type AppointmentResponse } from './http-mapping.js';
-
-// A documented problem+json response for the OpenAPI spec.
-function problem(status: number, description: string): ApiResponseOptions {
-  return {
-    status,
-    description,
-    content: { 'application/problem+json': { schema: { $ref: getSchemaPath(ProblemDto) } } },
-  };
-}
 
 @ApiTags('appointments')
 @ApiExtraModels(ProblemDto)
@@ -38,27 +28,27 @@ export class AppointmentsController {
   @Post()
   @HttpCode(201)
   @ApiCreatedResponse({ type: AppointmentResponseDto, description: 'Booked' })
-  @ApiResponse(problem(400, 'VALIDATION_FAILED'))
+  @ApiResponse(problemResponse(400, 'VALIDATION_FAILED'))
   @ApiResponse(
-    problem(
+    problemResponse(
       404,
       'DEALERSHIP_NOT_FOUND, SERVICE_TYPE_NOT_FOUND, CUSTOMER_NOT_FOUND, VEHICLE_NOT_FOUND, TECHNICIAN_NOT_FOUND',
     ),
   )
   @ApiResponse(
-    problem(
+    problemResponse(
       409,
       'Not at this time, try another: VEHICLE_ALREADY_BOOKED, TECHNICIAN_UNAVAILABLE, SLOT_UNAVAILABLE',
     ),
   )
   @ApiResponse(
-    problem(
+    problemResponse(
       422,
       'Can never work as asked: VEHICLE_NOT_OWNED_BY_CUSTOMER, TECHNICIAN_NOT_ELIGIBLE, SERVICE_NOT_OFFERED, START_NOT_ON_GRID, START_IN_PAST, BEYOND_BOOKING_HORIZON, OUTSIDE_OPENING_HOURS',
     ),
   )
   @ApiResponse(
-    problem(
+    problemResponse(
       503,
       'BOOKING_CONTENDED. The server could not decide in time, retry after Retry-After seconds',
     ),
@@ -97,8 +87,8 @@ export class AppointmentsController {
 
   @Get(':id')
   @ApiOkResponse({ type: AppointmentResponseDto })
-  @ApiResponse(problem(400, 'VALIDATION_FAILED, the id is not a UUID'))
-  @ApiResponse(problem(404, 'APPOINTMENT_NOT_FOUND'))
+  @ApiResponse(problemResponse(400, 'VALIDATION_FAILED, the id is not a UUID'))
+  @ApiResponse(problemResponse(404, 'APPOINTMENT_NOT_FOUND'))
   async findOne(@Param('id') id: string): Promise<AppointmentResponse> {
     if (!isUUID(id, 'all')) {
       throw validationProblem([{ field: 'id', message: 'id must be a UUID' }]);

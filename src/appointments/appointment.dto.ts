@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsUUID } from 'class-validator';
-import type { FieldError, Problem } from '../common/problem.js';
 import type { AppointmentResponse } from './http-mapping.js';
 import { IsInstant } from './is-instant.decorator.js';
 
@@ -90,32 +89,4 @@ export class AppointmentResponseDto implements AppointmentResponse {
 
   @ApiProperty({ example: '2027-03-01T09:00:00Z', description: 'UTC' })
   createdAt: string;
-}
-
-export class FieldErrorDto implements FieldError {
-  @ApiProperty({ example: 'startTime' })
-  field: string;
-
-  @ApiProperty()
-  message: string;
-}
-
-export class ProblemDto implements Problem {
-  @ApiProperty({ example: 'about:blank' })
-  type: string;
-
-  @ApiProperty({ example: 'Slot unavailable' })
-  title: string;
-
-  @ApiProperty({ example: 409 })
-  status: number;
-
-  @ApiProperty({ example: 'SLOT_UNAVAILABLE', description: 'Stable, switch on this' })
-  code: string;
-
-  @ApiProperty()
-  detail: string;
-
-  @ApiPropertyOptional({ type: [FieldErrorDto], description: 'Only on 400 VALIDATION_FAILED' })
-  errors?: FieldErrorDto[];
 }

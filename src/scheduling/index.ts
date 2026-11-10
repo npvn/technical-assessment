@@ -10,3 +10,4 @@ export {
 } from './check-booking-time.js';
 export { type Clock, systemClock, FixedClock } from './clock.js';
 export { parseInstant } from './parse-instant.js';
+export { STEP_MINUTES, HORIZON_DAYS } from './booking-rules.js';

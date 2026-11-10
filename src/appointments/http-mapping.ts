@@ -1,5 +1,5 @@
-import { DateTime } from 'luxon';
 import type { Problem } from '../common/problem.js';
+import { formatLocal, formatUtc } from '../common/time-format.js';
 import type { Appointment, BookingErrorCode, BookingResult } from './booking.types.js';
 
 // An appointment together with its dealership's time zone, which the
@@ -132,6 +132,12 @@ const CONTENDED: Problem = {
   detail: 'The server could not settle this booking in time. Try again shortly.',
 };
 
+// The problem body for one booking error code. GET /availability uses it
+// too for its 404s, so the wording lives in one place.
+export function bookingProblem(code: BookingErrorCode): Problem {
+  return { ...BOOKING_ERRORS[code], code };
+}
+
 export function toHttpAnswer(result: BookingResult): BookingHttpAnswer {
   switch (result.kind) {
     case 'created':
@@ -139,11 +145,7 @@ export function toHttpAnswer(result: BookingResult): BookingHttpAnswer {
     case 'replayed':
       return { kind: 'success', status: 201, headers: { 'Idempotent-Replayed': 'true' } };
     case 'rejected':
-      return {
-        kind: 'problem',
-        problem: { ...BOOKING_ERRORS[result.code], code: result.code },
-        headers: {},
-      };
+      return { kind: 'problem', problem: bookingProblem(result.code), headers: {} };
     case 'contended':
       return { kind: 'problem', problem: { ...CONTENDED }, headers: { 'Retry-After': '1' } };
   }
@@ -166,22 +168,4 @@ export function toAppointmentResponse(view: AppointmentView): AppointmentRespons
     timeZone: view.timeZone,
     createdAt: formatUtc(view.createdAt),
   };
-}
-
-// 2027-03-09T09:00:00Z. Milliseconds are cut off, not rounded, so a
-// created_at a little before a second never shows the next second.
-function formatUtc(instant: Date): string {
-  return DateTime.fromJSDate(instant, { zone: 'utc' })
-    .startOf('second')
-    .toISO({ suppressMilliseconds: true })!;
-}
-
-// 2027-03-09T09:00:00+00:00. Luxon writes a numeric offset for a named zone,
-// even when it is zero, which is what the SPEC wants (never Z here).
-function formatLocal(instant: Date, timeZone: string): string {
-  const local = DateTime.fromJSDate(instant, { zone: timeZone });
-  if (!local.isValid) {
-    throw new Error(`Unknown time zone "${timeZone}"`);
-  }
-  return local.startOf('second').toISO({ suppressMilliseconds: true });
 }

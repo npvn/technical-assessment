@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { checkBookingTime, type Clock, type TimeRange } from '../scheduling/index.js';
+import {
+  HORIZON_DAYS,
+  STEP_MINUTES,
+  checkBookingTime,
+  type Clock,
+  type TimeRange,
+} from '../scheduling/index.js';
 import type { BookingConfig } from './booking.config.js';
 import type { BookingAttempt, BookingLookup, BookingStore } from './booking.store.js';
 import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
@@ -9,10 +15,6 @@ import type {
   BookingResult,
   ContendedReason,
 } from './booking.types.js';
-
-// Fixed by the SPEC (A9, A10), not config.
-const STEP_MINUTES = 15;
-const HORIZON_DAYS = 90;
 
 // Database errors that say nothing about free slots (ADR 001 decision 6).
 // Deadlock, serialization failure and lock timeout get retried, up to
