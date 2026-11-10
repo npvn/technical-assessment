@@ -3,6 +3,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import { ProblemFilter } from './problem.filter.js';
 import { validationProblem } from './problem.js';
+import { RequestShapePipe } from './request-shape.pipe.js';
 
 // Everything main.ts sets on the app that isn't a provider: the logger, the
 // validation pipe, the problem+json filter and the OpenAPI docs. The e2e
@@ -11,6 +12,8 @@ export function configureApp(app: INestApplication): void {
   // Nest's own log lines go through pino too, as JSON with the reqId
   app.useLogger(app.get(Logger));
   app.useGlobalPipes(
+    // First, so a body nested too deep never reaches class-transformer
+    new RequestShapePipe(),
     new ValidationPipe({
       // An extra field is a 400 naming it (AC-20), not silently dropped
       whitelist: true,

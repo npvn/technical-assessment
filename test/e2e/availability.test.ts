@@ -303,6 +303,22 @@ describe('GET /availability', () => {
   });
 
   describe('a bad query is 400 VALIDATION_FAILED naming the field', () => {
+    // foo=1 was already refused, constructor=1 got through as a 200
+    it.each(['constructor', 'toString', 'prototype'])(
+      'AC-20 an extra query parameter named %s',
+      async (key) => {
+        const { place } = await north();
+        const res = await availability({
+          dealershipId: place.id,
+          serviceTypeId: types.oil,
+          date: '2027-03-09',
+          [key]: '1',
+        });
+        expectProblem(res, 400, 'VALIDATION_FAILED');
+        expect(errorFields(res)).toEqual([key]);
+      },
+    );
+
     it.each(['2027-3-9', 'tomorrow', '2027-02-30', '2027-03-09T09:00:00Z', '20270309', ''])(
       'AC-33 date=%s',
       async (date) => {

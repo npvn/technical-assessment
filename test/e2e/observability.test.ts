@@ -528,6 +528,35 @@ describe('the database is gone', () => {
 // Every connection in the pool is busy (here the only one, held by an open
 // transaction). Without a connect timeout the request would queue forever,
 // past every other budget. With one it gets a 503 and can try again.
+// Somebody else holds a lock on appointments, the way a migration would. A
+// read waits out the app's lock timeout (2 s) and gets 55P03. That is "try
+// again", the same as inside the booking loop, not a bug.
+describe('a table lock held by someone else', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    app = await boot({ databaseUrl: testDb.url });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('GET /appointments/:id is 503 SERVICE_UNAVAILABLE with Retry-After after the lock timeout', async () => {
+    const lock = await testDb.db.startTransaction().execute();
+    try {
+      await sql`LOCK TABLE appointments IN ACCESS EXCLUSIVE MODE`.execute(lock);
+
+      const res = await request(app.getHttpServer()).get(`/appointments/${randomUUID()}`);
+
+      expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+      expect(res.headers['retry-after']).toBe('1');
+    } finally {
+      await lock.rollback().execute();
+    }
+  });
+});
+
 describe('the pool has no free connection', () => {
   let app: INestApplication;
 
@@ -614,5 +643,137 @@ describe('AC-34 a database blip does not kill the process', () => {
       if (ready !== 200) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(ready).toBe(200);
+  });
+});
+
+// A restart or a failover ends every session, also the ones in the middle of
+// a booking transaction. pg-pool only listens for errors on idle clients, so
+// before the fix the dead session's 'error' event had no listener and took
+// the whole process down, with every other request it was serving. Here one
+// app session is ended while a booking holds it, in the two ways that can
+// happen: between two statements, and while a statement is running.
+describe('AC-34 Postgres ends a session in the middle of a booking', () => {
+  let app: INestApplication;
+  const applicationName = `midtx_${randomBytes(4).toString('hex')}`;
+  // The first slot read of a booking can be held here, inside its
+  // transaction, until the test lets it go
+  let holdNextRead = false;
+  let held: () => void = () => {};
+  let release: () => void = () => {};
+
+  beforeAll(async () => {
+    const url = new URL(testDb.url);
+    url.searchParams.set('application_name', applicationName);
+    app = await boot({
+      databaseUrl: url.toString(),
+      wrapStore: (real) => ({
+        lookup: (req) => real.lookup(req),
+        runAttempt: (work) =>
+          real.runAttempt((attempt) =>
+            work({
+              readSlot: async (query) => {
+                const read = await attempt.readSlot(query);
+                if (holdNextRead) {
+                  holdNextRead = false;
+                  const gate = new Promise<void>((resolve) => (release = resolve));
+                  held();
+                  await gate;
+                }
+                return read;
+              },
+              tryInsert: (booking) => attempt.tryInsert(booking),
+            }),
+          ),
+      }),
+    });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  const http = () => request(app.getHttpServer());
+
+  // Ends the app's sessions that match, and says how many it ended
+  async function endSessions(where: 'idle in transaction' | 'waiting on a lock'): Promise<number> {
+    const result =
+      where === 'idle in transaction'
+        ? await sql<{ pid: number }>`
+            SELECT pg_terminate_backend(pid) AS pid FROM pg_stat_activity
+            WHERE application_name = ${applicationName} AND state = 'idle in transaction'
+          `.execute(testDb.db)
+        : await sql<{ pid: number }>`
+            SELECT pg_terminate_backend(pid) AS pid FROM pg_stat_activity
+            WHERE application_name = ${applicationName} AND wait_event_type = 'Lock'
+          `.execute(testDb.db);
+    return result.rows.length;
+  }
+
+  async function until(check: () => Promise<boolean>): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('gave up waiting');
+  }
+
+  // The process is still up and the pool still works: a fresh booking books
+  async function stillWorks(): Promise<void> {
+    expect((await http().get('/health/live')).status).toBe(200);
+    const place = await smallNorth();
+    const car = await insertCustomerWithVehicle(testDb.db);
+    const res = await http()
+      .post('/appointments')
+      .send(body(place, car, '2027-03-09T09:00:00Z'));
+    expect({ status: res.status, code: res.body?.code }).toEqual({ status: 201, code: undefined });
+  }
+
+  it('between two statements: the booking gets 503 SERVICE_UNAVAILABLE and the process stays up', async () => {
+    const place = await smallNorth();
+    const car = await insertCustomerWithVehicle(testDb.db);
+    const atHold = new Promise<void>((resolve) => (held = resolve));
+    holdNextRead = true;
+
+    const post = http()
+      .post('/appointments')
+      .send(body(place, car, '2027-03-09T09:00:00Z'));
+    const answer = post.then((res) => res);
+    await atHold;
+    expect(await endSessions('idle in transaction')).toBe(1);
+    // Gives pg time to see the closed socket before the booking goes on
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const res = await answer;
+
+    expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+    expect(res.headers['retry-after']).toBe('1');
+    await stillWorks();
+  });
+
+  it('while a statement is running: the booking gets 503 SERVICE_UNAVAILABLE and the process stays up', async () => {
+    const place = await smallNorth();
+    const car = await insertCustomerWithVehicle(testDb.db);
+    // Holds the table, so the booking's first read inside its transaction
+    // waits on the lock. The app's lock timeout is 2 s, the session is
+    // ended long before that.
+    const lock = await testDb.db.startTransaction().execute();
+    let answer: Promise<Response> | undefined;
+    try {
+      await sql`LOCK TABLE appointments IN ACCESS EXCLUSIVE MODE`.execute(lock);
+      answer = http()
+        .post('/appointments')
+        .send(body(place, car, '2027-03-09T09:00:00Z'))
+        .then((res) => res);
+      await until(async () => (await endSessions('waiting on a lock')) === 1);
+    } finally {
+      await lock.rollback().execute();
+    }
+    const res = await answer;
+
+    expect(res).toBeDefined();
+    if (!res) return;
+    expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+    expect(res.headers['retry-after']).toBe('1');
+    await stillWorks();
   });
 });

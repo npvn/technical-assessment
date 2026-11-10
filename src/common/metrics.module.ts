@@ -16,7 +16,10 @@ import { Metrics } from './metrics.js';
 
 // Counts every HTTP request when its response finishes. By then Express has
 // matched the route, so the label is the route template. A request that
-// matched no route is "unmatched", so random paths can't grow the series.
+// matched no route still has the route this middleware is mounted on, so it
+// shows up as route="{/*splat}" (see forRoutes below). All of them share that
+// one label, so random paths can't grow the series. "unmatched" is only the
+// fallback for a request with no route at all, which I haven't seen happen.
 @Injectable()
 class HttpMetricsMiddleware implements NestMiddleware {
   constructor(private readonly metrics: Metrics) {}

@@ -63,6 +63,9 @@ describe('the database is not there right now', () => {
     ['57P03', 'cannot connect now, the server is starting up'],
     ['53300', 'too many connections'],
     ['57014', 'a statement timeout outside the booking loop'],
+    ['55P03', 'a lock timeout outside the booking loop, say behind a migration'],
+    ['40P01', 'a deadlock outside the booking loop'],
+    ['40001', 'a serialization failure outside the booking loop'],
     ['08006', 'connection failure'],
     ['08001', 'the client could not connect'],
     ['08003', 'the connection does not exist'],
@@ -74,6 +77,7 @@ describe('the database is not there right now', () => {
     ['ENOTFOUND', 'the host name did not resolve'],
     ['EAI_AGAIN', 'the name lookup failed for now'],
     ['DB_CONNECT_FAILED', 'our own code for a failed pool connect, see database.ts'],
+    ['DB_CONNECTION_LOST', 'our own code for a query on a connection that died, see database.ts'],
   ])('%s (%s) is 503 SERVICE_UNAVAILABLE with Retry-After', (code) => {
     const res = answer(withCode(code));
 
@@ -109,7 +113,6 @@ describe('everything else unexpected is still a 500', () => {
     ['a plain error', new Error('kaboom')],
     ['a unique violation', withCode('23505')],
     ['an exclusion violation', withCode('23P01')],
-    ['a deadlock the loop did not catch', withCode('40P01')],
     ['a code that only looks like a class 08 one', withCode('X08006')],
     ['a code that is not a string', Object.assign(new Error('odd'), { code: 57 })],
     ['something that is not an Error', 'just a string'],

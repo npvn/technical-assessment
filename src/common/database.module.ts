@@ -22,13 +22,22 @@ const DATABASE_WITH_POOL = Symbol('DATABASE_WITH_POOL');
       provide: DATABASE_WITH_POOL,
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => {
-        const both = createDatabaseWithPool({
-          url: config.databaseUrl,
-          poolSize: config.dbPoolSize,
-          statementTimeoutMs: config.booking.statementTimeoutMs,
-          lockTimeoutMs: config.booking.lockTimeoutMs,
-          connectTimeoutMs: config.dbConnectTimeoutMs,
-        });
+        const lostLogger = new Logger('DatabasePool');
+        const both = createDatabaseWithPool(
+          {
+            url: config.databaseUrl,
+            poolSize: config.dbPoolSize,
+            statementTimeoutMs: config.booking.statementTimeoutMs,
+            lockTimeoutMs: config.booking.lockTimeoutMs,
+            connectTimeoutMs: config.dbConnectTimeoutMs,
+          },
+          {
+            // The request using it gets a 503, this is the line for the
+            // operator. Code only, like the idle handler below.
+            onLostInUse: (code) =>
+              lostLogger.warn(`database connection lost while in use, code ${code}`),
+          },
+        );
         keepRunningOnIdleErrors(both.pool);
         return both;
       },
@@ -57,6 +66,8 @@ export class DatabaseModule implements OnApplicationShutdown {
 
 // When Postgres ends a connection that is sitting idle in the pool (a
 // restart, a failover, pg_terminate_backend), pg emits 'error' on the pool.
+// (A connection that is checked out has its own listener, see watchClient in
+// src/db/database.ts.)
 // With no listener Node treats that as an uncaught error and the whole
 // process dies, and every instance would go down with one database blip.
 // The pool has already thrown the dead connection away and opens a new one

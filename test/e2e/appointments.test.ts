@@ -329,6 +329,41 @@ describe('POST /appointments', () => {
   });
 
   describe('AC-20 a bad body is 400 VALIDATION_FAILED naming the field', () => {
+    // A valid body as JSON text, with one more field at the end. Written by
+    // hand, so a key like __proto__ goes over the wire as an ordinary key.
+    function withExtra(place: Place, car: Car, key: string, rawValue: string): string {
+      const json = JSON.stringify(body(place, car, '2027-03-09T09:00:00Z'));
+      return `${json.slice(0, -1)},${JSON.stringify(key)}:${rawValue}}`;
+    }
+
+    // From the break-it run: about 4 KB, and class-transformer ran out of
+    // stack on it, which was a 500 and an error level log line
+    it('AC-20 an extra field nested 2000 levels deep is 400 naming it', async () => {
+      const { place, car } = await north();
+      const deep = '['.repeat(2000) + ']'.repeat(2000);
+      const res = await http()
+        .post('/appointments')
+        .set('Content-Type', 'application/json')
+        .send(withExtra(place, car, 'foo', deep));
+      expectProblem(res, 400, 'VALIDATION_FAILED');
+      expect(errorFields(res)).toEqual(['foo']);
+    });
+
+    // Names that exist on every object through Object.prototype got past the
+    // "no unknown fields" check
+    it.each(['constructor', '__proto__', 'toString', 'prototype', 'hasOwnProperty', 'valueOf'])(
+      'AC-20 an extra field named %s',
+      async (key) => {
+        const { place, car } = await north();
+        const res = await http()
+          .post('/appointments')
+          .set('Content-Type', 'application/json')
+          .send(withExtra(place, car, key, '1'));
+        expectProblem(res, 400, 'VALIDATION_FAILED');
+        expect(errorFields(res)).toEqual([key]);
+      },
+    );
+
     it('AC-20 a missing vehicleId', async () => {
       const { place, car } = await north();
       const withoutVehicle: Record<string, unknown> = body(place, car, '2027-03-09T09:00:00Z');
