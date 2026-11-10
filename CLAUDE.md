@@ -23,6 +23,7 @@ This is a NestJS + PostgreSQL service that books a service bay and a qualified t
 9. **SQL migrations are plain SQL and never edited after they are committed.** Add a new one instead.
 10. **Do not commit, stage, stash or clean in git.** The engineer reviews the diff and commits.
 11. **Never log customer names, emails or VINs.** Log ids.
+12. **A concurrency test counts only once it has been seen failing without the thing it protects.** Drop the constraint (or remove the retry) in a scratch copy and show the test go red. Timing-based races pass by luck, so race tests hold every request at a barrier before the write (see `test/integration/appointments/race-barrier.ts`).
 
 ## Style
 
