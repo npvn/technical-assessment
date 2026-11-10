@@ -1,3 +1,4 @@
+import type { Writable } from 'node:stream';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'supertest';
@@ -8,6 +9,10 @@ import { PostgresBookingStore, type BookingStore } from '../../src/appointments/
 import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from '../../src/appointments/booking.tokens.js';
 import { DATABASE } from '../../src/common/database.module.js';
 import { configureApp } from '../../src/common/configure-app.js';
+import { LOG_DESTINATION } from '../../src/common/logging.module.js';
+// Not in the package's exports, so it comes by path. It is nestjs-pino's own
+// reset for tests, see bootApp.
+import { __resetOutOfContextForTests as resetNestjsPino } from '../../node_modules/nestjs-pino/dist/esm/PinoLogger.js';
 import type { Database } from '../../src/db/types.js';
 import type { Clock } from '../../src/scheduling/index.js';
 
@@ -41,6 +46,11 @@ export interface BootOptions {
   // DB_POOL_SIZE for the app. 5 is plenty for one request at a time, a race
   // of N parallel requests needs more than N.
   poolSize?: number;
+  // Where the app's JSON log lines go, for a test that reads them back.
+  logs?: Writable;
+  // LOG_LEVEL for the app. Defaults to silent so test output stays readable,
+  // or info when the test captures the logs.
+  logLevel?: string;
 }
 
 // The config comes from the environment like in production, so it has to be
@@ -48,6 +58,12 @@ export interface BootOptions {
 export async function bootApp(options: BootOptions): Promise<INestApplication> {
   process.env.DATABASE_URL = options.databaseUrl;
   process.env.DB_POOL_SIZE = String(options.poolSize ?? 5);
+  process.env.LOG_LEVEL = options.logLevel ?? (options.logs ? 'info' : 'silent');
+  // nestjs-pino builds one pino-http instance per process and keeps it, so
+  // the first app in a test file would decide the level and the destination
+  // for every app after it. Production runs one app per process. A test file
+  // boots several, so each boot starts from a clean slate.
+  resetNestjsPino();
 
   let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(CLOCK)
@@ -61,6 +77,9 @@ export async function bootApp(options: BootOptions): Promise<INestApplication> {
       factory: (db: Kysely<Database>, config: BookingConfig) =>
         wrap(new PostgresBookingStore(db, config)),
     });
+  }
+  if (options.logs) {
+    builder = builder.overrideProvider(LOG_DESTINATION).useValue(options.logs);
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();

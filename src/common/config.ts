@@ -41,3 +41,32 @@ function positiveInt(env: Env, name: string, fallback: number): number {
   }
   return Number(raw);
 }
+
+export interface LogConfig {
+  level: LogLevel;
+  // pino-pretty instead of JSON lines. For a person reading a terminal, never
+  // for production (pino-pretty is a dev dependency, the image doesn't have it).
+  pretty: boolean;
+}
+
+const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+// Kept apart from loadConfig, so the log settings can be read on their own
+// without a DATABASE_URL. Same rule as the rest, a bad value stops the app
+// at start.
+export function loadLogConfig(env: Env): LogConfig {
+  const level = env.LOG_LEVEL ?? 'info';
+  if (!isLogLevel(level)) {
+    throw new Error(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}, got "${level}"`);
+  }
+  const pretty = env.LOG_PRETTY ?? 'false';
+  if (pretty !== 'true' && pretty !== 'false') {
+    throw new Error(`LOG_PRETTY must be true or false, got "${pretty}"`);
+  }
+  return { level, pretty: pretty === 'true' };
+}
+
+function isLogLevel(value: string): value is LogLevel {
+  return (LOG_LEVELS as readonly string[]).includes(value);
+}

@@ -1,12 +1,15 @@
 import { ValidationPipe, type INestApplication, type ValidationError } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
 import { ProblemFilter } from './problem.filter.js';
 import { validationProblem } from './problem.js';
 
-// Everything main.ts sets on the app that isn't a provider: the validation
-// pipe, the problem+json filter and the OpenAPI docs. The e2e tests call the
-// same function, so they test the app that ships.
+// Everything main.ts sets on the app that isn't a provider: the logger, the
+// validation pipe, the problem+json filter and the OpenAPI docs. The e2e
+// tests call the same function, so they test the app that ships.
 export function configureApp(app: INestApplication): void {
+  // Nest's own log lines go through pino too, as JSON with the reqId
+  app.useLogger(app.get(Logger));
   app.useGlobalPipes(
     new ValidationPipe({
       // An extra field is a 400 naming it (AC-20), not silently dropped

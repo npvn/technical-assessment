@@ -19,3 +19,16 @@ jobs:
       # One script so CI and a local run are the same gate.
       # Integration and e2e tests start Postgres with Testcontainers, which works on the hosted runner's Docker.
       - run: npm run ci
+      # The image as it ships: compose builds it, runs the migrations and the
+      # seed, and --wait only returns once the api healthcheck (/health/ready)
+      # passes.
+      - name: Compose smoke test
+        run: |
+          docker compose up -d --build --wait
+          curl -fsS localhost:3000/health/ready
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Compose down
+        if: always()
+        run: docker compose down -v

@@ -1,4 +1,4 @@
-import { loadConfig } from '../../../src/common/config.js';
+import { loadConfig, loadLogConfig } from '../../../src/common/config.js';
 
 const URL = 'postgres://user:pass@localhost:5432/scheduler';
 
@@ -47,4 +47,39 @@ describe('loadConfig', () => {
   it.each(['-1', '0'])('fails fast on a pool size below 1 (%s)', (value) => {
     expect(() => loadConfig({ DATABASE_URL: URL, DB_POOL_SIZE: value })).toThrow(/DB_POOL_SIZE/);
   });
+});
+
+describe('loadLogConfig', () => {
+  it('logs at info as JSON when nothing is set', () => {
+    expect(loadLogConfig({})).toEqual({ level: 'info', pretty: false });
+  });
+
+  it('reads LOG_LEVEL and LOG_PRETTY', () => {
+    expect(loadLogConfig({ LOG_LEVEL: 'debug', LOG_PRETTY: 'true' })).toEqual({
+      level: 'debug',
+      pretty: true,
+    });
+    expect(loadLogConfig({ LOG_LEVEL: 'warn', LOG_PRETTY: 'false' })).toEqual({
+      level: 'warn',
+      pretty: false,
+    });
+  });
+
+  it.each(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])(
+    'takes the pino level %s',
+    (level) => {
+      expect(loadLogConfig({ LOG_LEVEL: level }).level).toBe(level);
+    },
+  );
+
+  it.each(['verbose', 'INFO', ''])('fails fast on a log level pino does not know (%j)', (value) => {
+    expect(() => loadLogConfig({ LOG_LEVEL: value })).toThrow(/LOG_LEVEL/);
+  });
+
+  it.each(['yes', '1', 'TRUE', ''])(
+    'fails fast on LOG_PRETTY that is not true or false (%j)',
+    (value) => {
+      expect(() => loadLogConfig({ LOG_PRETTY: value })).toThrow(/LOG_PRETTY/);
+    },
+  );
 });

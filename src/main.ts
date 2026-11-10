@@ -6,7 +6,8 @@ import type { AppConfig } from './common/config.js';
 import { configureApp } from './common/configure-app.js';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // Holds Nest's start up lines until configureApp hands it the pino logger
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
   configureApp(app);
   app.enableShutdownHooks();
   const config = app.get<AppConfig>(APP_CONFIG);

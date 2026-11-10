@@ -1,17 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import type { Kysely } from 'kysely';
 import request, { type Response } from 'supertest';
-import { AppModule } from '../../src/app.module.js';
-import type { BookingConfig } from '../../src/appointments/booking.config.js';
-import { PostgresBookingStore, type BookingStore } from '../../src/appointments/booking.store.js';
-import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from '../../src/appointments/booking.tokens.js';
-import { configureApp } from '../../src/common/configure-app.js';
-import { DATABASE } from '../../src/common/database.module.js';
-import { LOG_DESTINATION } from '../../src/common/logging.module.js';
-import type { Database } from '../../src/db/types.js';
 import { databaseUrl } from '../support/database-url.js';
 import { insertCustomerWithVehicle } from '../support/fixtures.js';
 import { createTestDatabase, type TestDatabase } from '../support/test-database.js';
@@ -24,7 +14,7 @@ import {
   type Place,
   type ServiceTypes,
 } from '../integration/appointments/world.js';
-import { SettableClock, expectProblem } from './app.js';
+import { SettableClock, bootApp, expectProblem, type BootOptions } from './app.js';
 
 // Health, metrics and logs (step 7, AC-34 to AC-36) through the real
 // AppModule. Each describe boots its own app, so the counters start at zero
@@ -71,37 +61,9 @@ class LogCapture extends Writable {
   }
 }
 
-interface ObservedBoot {
-  databaseUrl: string;
-  logs?: LogCapture;
-  wrapStore?: (real: BookingStore) => BookingStore;
-}
-
-// Same as bootApp in app.ts, plus a way to swap the log destination, which
-// AC-36 needs to read the log lines back.
-async function boot(options: ObservedBoot): Promise<INestApplication> {
-  process.env.DATABASE_URL = options.databaseUrl;
-  process.env.DB_POOL_SIZE = '5';
-
-  let builder = Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(CLOCK)
-    .useValue(clock);
-  if (options.logs) {
-    builder = builder.overrideProvider(LOG_DESTINATION).useValue(options.logs);
-  }
-  if (options.wrapStore) {
-    const wrap = options.wrapStore;
-    builder = builder.overrideProvider(BOOKING_STORE).useFactory({
-      inject: [DATABASE, BOOKING_CONFIG],
-      factory: (db: Kysely<Database>, config: BookingConfig) =>
-        wrap(new PostgresBookingStore(db, config)),
-    });
-  }
-  const moduleRef = await builder.compile();
-  const app = moduleRef.createNestApplication();
-  configureApp(app);
-  await app.init();
-  return app;
+// bootApp with this file's clock. Every app here has the default pool size.
+function boot(options: Omit<BootOptions, 'clock'>): Promise<INestApplication> {
+  return bootApp({ ...options, clock });
 }
 
 // North with one bay and one OIL technician, so a second booking at the

@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import {
   HORIZON_DAYS,
   STEP_MINUTES,
@@ -7,7 +7,11 @@ import {
   type TimeRange,
 } from '../scheduling/index.js';
 import type { BookingConfig } from './booking.config.js';
-import { noopBookingObserver, type BookingObserver } from './booking.observer.js';
+import {
+  noopBookingObserver,
+  type BookingObserver,
+  type BookingOutcome,
+} from './booking.observer.js';
 import type {
   BookingAttempt,
   BookingLookup,
@@ -57,6 +61,14 @@ interface LoopState {
   cap: number | null;
 }
 
+// What the loop did, for the observer. attempts counts every transaction the
+// loop started, including the ones a database error broke. lostRaces counts
+// the inserts that came back with zero rows.
+interface LoopCounts {
+  attempts: number;
+  lostRaces: number;
+}
+
 // An attempt either answers the request, or lost a race and the loop has to
 // go round again.
 type AttemptOutcome = { kind: 'answer'; result: BookingResult } | { kind: 'lost' };
@@ -73,13 +85,33 @@ export class BookingService {
     @Inject(BOOKING_STORE) private readonly store: BookingStore,
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(BOOKING_CONFIG) private readonly config: BookingConfig,
-    // Not called yet. Step 7 red stub, the green half wires it in.
+    // Gets one record per request for the metrics and the booking log line.
+    // Optional, so the loop tests can build the service with three arguments.
     @Optional()
     @Inject(BOOKING_OBSERVER)
     private readonly observer: BookingObserver = noopBookingObserver,
   ) {}
 
+  private readonly logger = new Logger(BookingService.name);
+
+  // Answers the request, then tells the observer how it went. A throw is
+  // recorded as INTERNAL_ERROR and thrown on unchanged, so the 500 still
+  // shows up in the booking metrics.
   async book(request: BookingRequest): Promise<BookingResult> {
+    const startedAt = this.clock.now().getTime();
+    const counts: LoopCounts = { attempts: 0, lostRaces: 0 };
+    let result: BookingResult;
+    try {
+      result = await this.decide(request, counts);
+    } catch (error) {
+      this.observe(request, { outcome: 'INTERNAL_ERROR' }, counts, startedAt);
+      throw error;
+    }
+    this.observe(request, outcomeOf(result), counts, startedAt);
+    return result;
+  }
+
+  private async decide(request: BookingRequest, counts: LoopCounts): Promise<BookingResult> {
     const idempotency: Idempotency | undefined = request.idempotencyKey
       ? {
           customerId: request.customerId,
@@ -112,7 +144,7 @@ export class BookingService {
     });
     if (!time.ok) return rejected(time.code);
 
-    return this.loop({
+    return this.loop(counts, {
       request,
       serviceTypeId: serviceType.id,
       skillCode: serviceType.requiredSkillCode,
@@ -129,10 +161,9 @@ export class BookingService {
   // - the hard cap on attempts that lost a race (B + T + 2 from the first read)
   // - the database error budget (TRANSIENT_RETRIES)
   // - the time budget, which covers both of the above
-  private async loop(input: LoopInput): Promise<BookingResult> {
+  private async loop(counts: LoopCounts, input: LoopInput): Promise<BookingResult> {
     const startedAt = this.clock.now().getTime();
     const state: LoopState = { cap: null };
-    let lostRaces = 0;
     let transientErrors = 0;
 
     for (;;) {
@@ -143,11 +174,12 @@ export class BookingService {
       }
       // Only lost races count here. A database error didn't show us anything
       // about the slot, so it doesn't use up the cap (it has its own budget).
-      if (state.cap !== null && lostRaces >= state.cap) {
+      if (state.cap !== null && counts.lostRaces >= state.cap) {
         return contended('attempt_cap');
       }
 
       let outcome: AttemptOutcome;
+      counts.attempts++;
       try {
         outcome = await this.store.runAttempt((attempt) => this.attempt(attempt, input, state));
       } catch (error) {
@@ -163,7 +195,7 @@ export class BookingService {
       }
 
       if (outcome.kind === 'answer') return outcome.result;
-      lostRaces++;
+      counts.lostRaces++;
     }
   }
 
@@ -241,6 +273,45 @@ export class BookingService {
         : {}),
     });
     return appointment ? answer({ kind: 'created', appointment }) : { kind: 'lost' };
+  }
+
+  // The answer is already settled by the time this runs, and a booking may
+  // already be committed. A broken metric or log line must not turn that into
+  // a 500 the client would then retry, so an observer error is only logged.
+  private observe(
+    request: BookingRequest,
+    outcome: { outcome: BookingOutcome; reason?: ContendedReason },
+    counts: LoopCounts,
+    startedAt: number,
+  ): void {
+    try {
+      this.observer.record({
+        dealershipId: request.dealershipId,
+        serviceTypeId: request.serviceTypeId,
+        ...outcome,
+        attempts: counts.attempts,
+        lostRaces: counts.lostRaces,
+        durationMs: this.clock.now().getTime() - startedAt,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `booking observer failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// The outcome as the API names it: created, replayed or the error code. A
+// 503 is BOOKING_CONTENDED with its reason next to it.
+function outcomeOf(result: BookingResult): { outcome: BookingOutcome; reason?: ContendedReason } {
+  switch (result.kind) {
+    case 'created':
+    case 'replayed':
+      return { outcome: result.kind };
+    case 'rejected':
+      return { outcome: result.code };
+    case 'contended':
+      return { outcome: 'BOOKING_CONTENDED', reason: result.reason };
   }
 }
 

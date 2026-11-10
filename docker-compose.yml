@@ -25,6 +25,21 @@ services:
       DATABASE_URL: postgres://scheduler:scheduler@db:5432/scheduler
     ports:
       - '3000:3000'
+    # Healthy once /health/ready says the database answers. The image has no
+    # curl, so node does the request. start_period covers the migrations and
+    # the seed on start.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy

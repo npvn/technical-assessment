@@ -9,8 +9,9 @@ import { AppointmentReader } from './appointment.reader.js';
 import { AppointmentsController } from './appointments.controller.js';
 import type { BookingConfig } from './booking.config.js';
 import { BookingService } from './booking.service.js';
+import { BookingTelemetry } from './booking.telemetry.js';
 import { PostgresBookingStore } from './booking.store.js';
-import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
+import { BOOKING_CONFIG, BOOKING_OBSERVER, BOOKING_STORE, CLOCK } from './booking.tokens.js';
 
 // The store and the reader are plain classes (the loop tests build them by
 // hand), so Nest gets them through factories.
@@ -34,6 +35,7 @@ import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
       inject: [DATABASE],
       useFactory: (db: Kysely<Database>) => new AppointmentReader(db),
     },
+    { provide: BOOKING_OBSERVER, useClass: BookingTelemetry },
     BookingService,
   ],
 })
