@@ -1,16 +1,15 @@
 import { sql, type Kysely } from 'kysely';
 import { DEFAULT_BOOKING_CONFIG } from '../../../src/appointments/booking.config.js';
-import type { BookingService } from '../../../src/appointments/booking.service.js';
 import { PostgresBookingStore } from '../../../src/appointments/booking.store.js';
 import { createDatabase } from '../../../src/db/database.js';
 import type { Database } from '../../../src/db/types.js';
 import { insertAppointment } from '../../support/fixtures.js';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database.js';
+import { racingBookingService } from './race-barrier.js';
 import {
   NORTH,
   SOUTH,
   ask,
-  bookingService,
   countOverlaps,
   countRows,
   insertServiceTypes,
@@ -29,6 +28,16 @@ import {
 //
 // After each run one SQL query checks the table itself for overlapping rows,
 // so the test doesn't rest on the result counts alone.
+//
+// Every race goes through a test-only barrier (race-barrier.ts): each
+// request's first read waits until all of them have read, and only then do
+// they insert. Without it AC-23 passed even with the three exclusion
+// constraints dropped. It runs first on a cold pool, opening the connections
+// and the lookups spread the 20 requests out, the first booking committed
+// before most of the others read, and they honestly saw "no slot". With the
+// barrier all 20 have seen the slot free before anybody inserts, so only the
+// constraints can stop the double booking. It also takes the timing luck out
+// of AC-24, AC-39 and AC-40.
 
 const POOL_SIZE = 30;
 const LOOP_BUDGET_MS = 30_000;
@@ -42,7 +51,7 @@ async function cars(world: ReturnType<typeof newWorld>, count: number): Promise<
 
 // AC-24's setup and checks, shared with AC-38 which runs it again on a
 // database whose default isolation level is REPEATABLE READ.
-async function runAc24(db: Kysely<Database>, types: ServiceTypes, service: BookingService) {
+async function runAc24(db: Kysely<Database>, types: ServiceTypes) {
   const w = newWorld(db, types);
   const place = await w.place(NORTH, {
     name: 'North',
@@ -50,6 +59,7 @@ async function runAc24(db: Kysely<Database>, types: ServiceTypes, service: Booki
     technicians: [OIL, OIL, OIL, OIL, OIL],
   });
   const drivers = await cars(w, 20);
+  const service = racingBookingService(db, drivers.length, { loopBudgetMs: LOOP_BUDGET_MS });
 
   const results = await Promise.all(
     drivers.map((car) => service.book(ask(types, place, car, tue('09:00')))),
@@ -64,12 +74,10 @@ async function runAc24(db: Kysely<Database>, types: ServiceTypes, service: Booki
 describe('Concurrency', () => {
   let tdb: TestDatabase;
   let types: ServiceTypes;
-  let service: BookingService;
 
   beforeAll(async () => {
     tdb = await createTestDatabase({ poolSize: POOL_SIZE });
     types = await insertServiceTypes(tdb.db);
-    service = bookingService(tdb.db, { loopBudgetMs: LOOP_BUDGET_MS });
   });
 
   afterAll(async () => {
@@ -80,6 +88,7 @@ describe('Concurrency', () => {
     const w = newWorld(tdb.db, types);
     const place = await w.place(NORTH, { name: 'North', bays: 1, technicians: [OIL] });
     const drivers = await cars(w, 20);
+    const service = racingBookingService(tdb.db, drivers.length, { loopBudgetMs: LOOP_BUDGET_MS });
 
     const results = await Promise.all(
       drivers.map((car) => service.book(ask(types, place, car, tue('09:00')))),
@@ -91,7 +100,7 @@ describe('Concurrency', () => {
   });
 
   it('AC-24 3 bays and 5 technicians, 20 parallel requests for one slot: exactly 3 created, 17 SLOT_UNAVAILABLE, no 503, no overlaps', async () => {
-    await runAc24(tdb.db, types, service);
+    await runAc24(tdb.db, types);
   });
 
   it('AC-39 10 parallel requests all preferring T1: exactly one created with T1, nine TECHNICIAN_UNAVAILABLE, nobody gets T2', async () => {
@@ -99,6 +108,7 @@ describe('Concurrency', () => {
     const place = await w.place(NORTH, { name: 'North', bays: 2, technicians: [OIL, OIL] });
     const [t1, t2] = place.technicians as [string, string];
     const drivers = await cars(w, 10);
+    const service = racingBookingService(tdb.db, drivers.length, { loopBudgetMs: LOOP_BUDGET_MS });
 
     const results = await Promise.all(
       drivers.map((car) =>
@@ -119,6 +129,7 @@ describe('Concurrency', () => {
     const south = await w.place(SOUTH, { name: 'South', bays: 1, technicians: [OIL] });
     const north = await w.place(NORTH, { name: 'North', bays: 1, technicians: [OIL] });
     const car = await w.car();
+    const service = racingBookingService(tdb.db, 2, { loopBudgetMs: LOOP_BUDGET_MS });
 
     const results = await Promise.all([
       service.book(ask(types, north, car, tue('09:00'))),
@@ -205,7 +216,6 @@ describe('AC-38 a database whose default isolation is REPEATABLE READ', () => {
   let tdb: TestDatabase;
   let db: Kysely<Database>;
   let types: ServiceTypes;
-  let service: BookingService;
 
   beforeAll(async () => {
     tdb = await createTestDatabase({ poolSize: 1 });
@@ -230,7 +240,6 @@ describe('AC-38 a database whose default isolation is REPEATABLE READ', () => {
       throw new Error(`expected repeatable read, the pool has ${rows[0]?.level}`);
     }
     types = await insertServiceTypes(db);
-    service = bookingService(db, { loopBudgetMs: LOOP_BUDGET_MS });
   });
 
   afterAll(async () => {
@@ -277,6 +286,6 @@ describe('AC-38 a database whose default isolation is REPEATABLE READ', () => {
   });
 
   it('AC-38 AC-24 still holds: exactly 3 created, 17 SLOT_UNAVAILABLE, no 503', async () => {
-    await runAc24(db, types, service);
+    await runAc24(db, types);
   });
 });
