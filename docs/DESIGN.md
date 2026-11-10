@@ -45,7 +45,7 @@ What each part does:
 - **Client or cURL.** No frontend. The "stubbed client" is the OpenAPI spec at `/docs` plus the README's cURL examples.
 - **`appointments/`.** Controller and DTOs for `POST /appointments` and `GET /appointments/:id`, and the booking service that runs the checks and the loop from ADR 001.
 - **`availability/`.** The controller for `GET /availability` and the free bay and technician queries. The booking read uses exactly the constraint's range expression and status filter, so the read and the constraint agree on what "free" means. The day query behind `GET /availability` uses the same status filter, with the half-open overlap rule applied in code.
-- **`scheduling/`.** Pure functions (no Nest, Kysely or pg): overlap, opening hours in the dealership's zone, the grid and the booking window. They take an injected `Clock`.
+- **`scheduling/`.** Pure functions (no Nest, Kysely or pg): overlap, opening hours in the dealership's zone, the grid and the booking window. They take the current time as a plain `now` argument, and the service gets it from the injected `Clock`, so the rules never read the system time.
 - **`db/`.** Kysely and its table types, the plain SQL migrations (the exclusion constraints live here) and the seed.
 - **`common/`.** Problem+json errors with a stable `code`, the injected clock, config, pino logging with a request id, Prometheus metrics and the health checks.
 - **PostgreSQL 16.** The only stateful part, and the thing that actually guarantees no double booking, through three exclusion constraints on `appointments`.
@@ -335,7 +335,7 @@ On the database side, a Postgres exporter for connections, lock waits, deadlocks
 - Migrations run as a separate job before a rollout (Compose runs them on start, fine for one instance), expand then contract, so old and new instances can run side by side.
 - Graceful shutdown lets in-flight bookings finish and closes the pool before the process exits.
 
-**Maintainability.** `scheduling/` has no framework or database imports, so the trickiest logic is tested with plain unit and property tests. The most important rule is plain SQL in one migration file, never edited after commit. One `npm run ci` gate runs locally and in GitHub Actions.
+**Maintainability.** `scheduling/` has no framework or database imports, so the trickiest logic is tested with plain unit and property tests. The rules that stop double bookings are plain SQL in one migration file (`0002_booking_constraints.sql`), and migrations are never edited after commit. One `npm run ci` gate runs locally and in GitHub Actions.
 
 **Observability.** In from the start, with metrics picked for this design's questions (section 7). Tracing is next.
 
