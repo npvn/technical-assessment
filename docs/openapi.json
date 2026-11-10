@@ -1,0 +1,615 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The Health Check is successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "enum": ["ok", "degraded"], "example": "ok" },
+                    "info": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {},
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Health Check is not successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["error", "shutting_down"],
+                      "example": "error"
+                    },
+                    "info": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect",
+                          "responseTime": 3005
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": {
+                        "database": { "status": "up", "responseTime": 12 },
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect",
+                          "responseTime": 3005
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": ["health"]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The Health Check is successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "enum": ["ok", "degraded"], "example": "ok" },
+                    "info": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {},
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Health Check is not successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["error", "shutting_down"],
+                      "example": "error"
+                    },
+                    "info": {
+                      "type": "object",
+                      "example": { "database": { "status": "up", "responseTime": 12 } },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect",
+                          "responseTime": 3005
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": {
+                        "database": { "status": "up", "responseTime": 12 },
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect",
+                          "responseTime": 3005
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": ["status"],
+                        "properties": {
+                          "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+                          "responseTime": {
+                            "type": "number",
+                            "description": "Time the health indicator took to respond, in ms"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": ["health"]
+      }
+    },
+    "/appointments": {
+      "post": {
+        "operationId": "AppointmentsController_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, per customer. The same key with the same request gives back the original booking with Idempotent-Replayed: true. The same key with a different request is 422 IDEMPOTENCY_KEY_REUSED.",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateAppointmentDto" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Booked, or the replay of an earlier booking with the same Idempotency-Key",
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true when this is the earlier booking handed back for a retry",
+                "schema": { "type": "string", "enum": ["true"] }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AppointmentResponseDto" }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_FAILED",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "404": {
+            "description": "DEALERSHIP_NOT_FOUND, SERVICE_TYPE_NOT_FOUND, CUSTOMER_NOT_FOUND, VEHICLE_NOT_FOUND, TECHNICIAN_NOT_FOUND",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "409": {
+            "description": "Not at this time, try another: VEHICLE_ALREADY_BOOKED, TECHNICIAN_UNAVAILABLE, SLOT_UNAVAILABLE",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "422": {
+            "description": "Can never work as asked: VEHICLE_NOT_OWNED_BY_CUSTOMER, TECHNICIAN_NOT_ELIGIBLE, SERVICE_NOT_OFFERED, START_NOT_ON_GRID, START_IN_PAST, BEYOND_BOOKING_HORIZON, OUTSIDE_OPENING_HOURS, IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "503": {
+            "description": "BOOKING_CONTENDED, the server could not decide in time. SERVICE_UNAVAILABLE, the database is not answering. Both: retry after Retry-After seconds",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          }
+        },
+        "tags": ["appointments"]
+      }
+    },
+    "/appointments/{id}": {
+      "get": {
+        "operationId": "AppointmentsController_findOne",
+        "parameters": [
+          { "name": "id", "required": true, "in": "path", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AppointmentResponseDto" }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_FAILED, the id is not a UUID",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "404": {
+            "description": "APPOINTMENT_NOT_FOUND",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          }
+        },
+        "tags": ["appointments"]
+      }
+    },
+    "/availability": {
+      "get": {
+        "operationId": "AvailabilityController_find",
+        "parameters": [
+          {
+            "name": "dealershipId",
+            "required": true,
+            "in": "query",
+            "schema": { "format": "uuid", "type": "string" }
+          },
+          {
+            "name": "serviceTypeId",
+            "required": true,
+            "in": "query",
+            "schema": { "format": "uuid", "type": "string" }
+          },
+          {
+            "name": "date",
+            "required": true,
+            "in": "query",
+            "description": "A local date in the dealership time zone, YYYY-MM-DD",
+            "schema": { "example": "2027-03-09", "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The free starts that day. An empty list for a closed day, a past day, a day past the 90 day window, or a dealership that cannot do this service.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AvailabilityResponseDto" }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_FAILED",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          },
+          "404": {
+            "description": "DEALERSHIP_NOT_FOUND, SERVICE_TYPE_NOT_FOUND",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDto" }
+              }
+            }
+          }
+        },
+        "tags": ["availability"]
+      }
+    }
+  },
+  "info": {
+    "title": "Unified Service Scheduler",
+    "description": "Books a service bay and a qualified technician for the whole length of a service appointment. Errors are application/problem+json with a stable code.",
+    "version": "0.1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "schemas": {
+      "FieldErrorDto": {
+        "type": "object",
+        "properties": {
+          "field": { "type": "string", "example": "startTime" },
+          "message": { "type": "string" }
+        },
+        "required": ["field", "message"]
+      },
+      "ProblemDto": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "example": "about:blank" },
+          "title": { "type": "string", "example": "Slot unavailable" },
+          "status": { "type": "number", "example": 409 },
+          "code": {
+            "type": "string",
+            "example": "SLOT_UNAVAILABLE",
+            "description": "Stable, switch on this"
+          },
+          "detail": { "type": "string" },
+          "errors": {
+            "description": "Only on 400 VALIDATION_FAILED",
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FieldErrorDto" }
+          }
+        },
+        "required": ["type", "title", "status", "code", "detail"]
+      },
+      "CreateAppointmentDto": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string", "format": "uuid" },
+          "vehicleId": { "type": "string", "format": "uuid" },
+          "dealershipId": { "type": "string", "format": "uuid" },
+          "serviceTypeId": { "type": "string", "format": "uuid" },
+          "startTime": {
+            "type": "string",
+            "description": "ISO 8601 date and time with an explicit offset (Z or +01:00). Must be on the 15 minute grid in the dealership time zone.",
+            "example": "2027-03-09T09:00:00Z"
+          },
+          "preferredTechnicianId": {
+            "type": "object",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Honoured or refused, never swapped for someone else."
+          }
+        },
+        "required": ["customerId", "vehicleId", "dealershipId", "serviceTypeId", "startTime"]
+      },
+      "AppointmentResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["confirmed", "cancelled"] },
+          "customerId": { "type": "string", "format": "uuid" },
+          "vehicleId": { "type": "string", "format": "uuid" },
+          "dealershipId": { "type": "string", "format": "uuid" },
+          "serviceTypeId": { "type": "string", "format": "uuid" },
+          "serviceBayId": { "type": "string", "format": "uuid" },
+          "technicianId": { "type": "string", "format": "uuid" },
+          "startsAt": { "type": "string", "example": "2027-03-09T09:00:00Z", "description": "UTC" },
+          "endsAt": { "type": "string", "example": "2027-03-09T10:00:00Z", "description": "UTC" },
+          "startsAtLocal": {
+            "type": "string",
+            "example": "2027-03-09T09:00:00+00:00",
+            "description": "Dealership local time with a numeric offset"
+          },
+          "endsAtLocal": {
+            "type": "string",
+            "example": "2027-03-09T10:00:00+00:00",
+            "description": "Dealership local time with a numeric offset"
+          },
+          "timeZone": {
+            "type": "string",
+            "example": "Europe/London",
+            "description": "The dealership IANA time zone"
+          },
+          "createdAt": { "type": "string", "example": "2027-03-01T09:00:00Z", "description": "UTC" }
+        },
+        "required": [
+          "id",
+          "status",
+          "customerId",
+          "vehicleId",
+          "dealershipId",
+          "serviceTypeId",
+          "serviceBayId",
+          "technicianId",
+          "startsAt",
+          "endsAt",
+          "startsAtLocal",
+          "endsAtLocal",
+          "timeZone",
+          "createdAt"
+        ]
+      },
+      "SlotResponseDto": {
+        "type": "object",
+        "properties": {
+          "startsAt": { "type": "string", "example": "2027-03-09T08:00:00Z", "description": "UTC" },
+          "startsAtLocal": {
+            "type": "string",
+            "example": "2027-03-09T08:00:00+00:00",
+            "description": "Dealership local time with a numeric offset"
+          }
+        },
+        "required": ["startsAt", "startsAtLocal"]
+      },
+      "AvailabilityResponseDto": {
+        "type": "object",
+        "properties": {
+          "dealershipId": { "type": "string", "format": "uuid" },
+          "serviceTypeId": { "type": "string", "format": "uuid" },
+          "date": { "type": "string", "example": "2027-03-09" },
+          "timeZone": {
+            "type": "string",
+            "example": "Europe/London",
+            "description": "The dealership IANA time zone"
+          },
+          "slots": {
+            "description": "Starts where a bay and a qualified technician are free for the whole job. A hint only, it does not check the vehicle or a preferred technician, so booking one can still fail.",
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SlotResponseDto" }
+          }
+        },
+        "required": ["dealershipId", "serviceTypeId", "date", "timeZone", "slots"]
+      }
+    }
+  }
+}
