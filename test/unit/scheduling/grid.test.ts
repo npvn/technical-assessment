@@ -46,7 +46,7 @@ describe('isOnGrid', () => {
     );
   });
 
-  // Added after mutation testing (PLAN step 10). With a step that divides 60
+  // Added after mutation testing. With a step that divides 60
   // the hours drop out of the sum, so only a step like 45 checks that hours
   // and minutes are added.
   it('works for a step that does not divide the hour', () => {

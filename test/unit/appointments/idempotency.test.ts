@@ -3,8 +3,8 @@ import type { BookingRequest } from '../../../src/appointments/booking.types.js'
 import { parseIdempotencyKey, requestHash } from '../../../src/appointments/idempotency.js';
 import { parseInstant } from '../../../src/scheduling/index.js';
 
-// The two pure halves of the Idempotency-Key (A15): the header check and the
-// hash that tells a replay from a reused key.
+// The two pure halves of the Idempotency-Key: the header check and the
+// hash that tells a replay from a reused key (A15).
 
 const REQUEST: BookingRequest = {
   dealershipId: 'de000000-0000-4000-8000-000000000001',

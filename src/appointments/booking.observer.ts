@@ -36,7 +36,7 @@ export interface BookingObserver {
 }
 
 // The default when nothing is wired up, so the loop tests can build the
-// service with three arguments like before.
+// service without passing an observer.
 export const noopBookingObserver: BookingObserver = {
   record: () => {},
 };

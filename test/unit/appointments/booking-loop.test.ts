@@ -103,7 +103,7 @@ describe('lost races', () => {
     expect(store.inserts).toHaveLength(1);
   });
 
-  it('a lost race on the preferred technician is TECHNICIAN_UNAVAILABLE, with no fallback to another technician (A19)', async () => {
+  it('a lost race on the preferred technician is TECHNICIAN_UNAVAILABLE, with no fallback to another technician (A19, A5)', async () => {
     const { store, book } = setup({
       read: (n) =>
         n === 1

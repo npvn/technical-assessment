@@ -46,14 +46,14 @@ export interface SlotQuery {
   skillCode: string;
   range: TimeRange;
   preferredTechnicianId: string | null;
-  // Set when the request has an idempotency key. Keys are per customer (A15).
+  // Set when the request has an idempotency key. A key is scoped to one customer (A15).
   idempotency?: { customerId: string; key: string } | null;
 }
 
 // What the classifying read found, as plain facts. The service turns them
 // into an answer in the ADR 001 order (vehicle, preferred technician, slot).
 // bayIds and technicianIds are the ordered free lists (bays by id,
-// technicians by fewest skills then id, A16). The first attempt's list
+// technicians by fewest skills then id (A16)). The first attempt's list
 // lengths give the hard cap.
 export interface SlotRead {
   vehicleBusy: boolean;
@@ -275,7 +275,7 @@ class PostgresBookingAttempt implements BookingAttempt {
 
     const busy = await trx
       .selectNoFrom((eb) => [
-        // The vehicle at any dealership, a car can't be in two places (A13)
+        // The vehicle at any dealership, a car can't be in two places at once (A13)
         eb
           .exists(
             eb

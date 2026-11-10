@@ -76,7 +76,8 @@ export class AppointmentsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AppointmentResponse> {
     // The header is checked here, the body by the validation pipe before
-    // this method runs. Both are 400 VALIDATION_FAILED, step 1 of the order.
+    // this method runs. Both are 400 VALIDATION_FAILED and come before any
+    // booking check.
     const idempotency = parseIdempotencyKey(rawKey);
     if (!idempotency.ok) {
       throw validationProblem([{ field: 'Idempotency-Key', message: idempotency.message }]);

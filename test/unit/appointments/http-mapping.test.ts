@@ -108,8 +108,7 @@ describe('toHttpAnswer', () => {
     });
   });
 
-  // Nothing produces 'replayed' until step 8, but the type has it, so the
-  // mapping has to say what it is (DESIGN.md section 5).
+  // The type has 'replayed', so the mapping has to say what it is (DESIGN.md section 5).
   it('replayed is a 201 with Idempotent-Replayed: true', () => {
     expect(toHttpAnswer({ kind: 'replayed', appointment: APPOINTMENT })).toEqual({
       kind: 'success',

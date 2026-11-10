@@ -103,7 +103,7 @@ describe('fitsOpeningHours', () => {
     ).toThrow(/Mars\/Nowhere/);
   });
 
-  // The tests below were added after mutation testing (PLAN step 10) showed
+  // The tests below were added after mutation testing showed
   // these cases had no test.
 
   it('opening and closing times with seconds are exact to the second', () => {

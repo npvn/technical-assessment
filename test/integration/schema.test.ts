@@ -327,9 +327,9 @@ describe('AC-21 idempotency keys', () => {
   });
 });
 
-// Not in the AC-21 table, but they are rules the step 2 notes put into the
-// schema, so each one gets a test that proves it is really there.
-describe('other schema checks from the step 2 notes', () => {
+// Not in the AC-21 table, but they are rules the schema is meant to enforce,
+// so each one gets a test that proves it is really there.
+describe('other schema checks', () => {
   it('a status other than confirmed or cancelled is refused (23514 appointments_status_check)', async () => {
     const w = await buildWorld();
     // The status type only allows the two values, so this one goes in as raw SQL

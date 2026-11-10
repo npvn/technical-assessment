@@ -25,7 +25,7 @@ import {
 
 // The booking service on a real Postgres, one request at a time. These assert
 // the domain result (the appointment, or the error code), not HTTP status
-// codes. Mapping to 201, 404, 409 and 422 is step 5's job, and so are the
+// codes. Mapping to 201, 404, 409 and 422 belongs to the HTTP layer, and so do the
 // cases that need HTTP (AC-37's 400 row, AC-44's GET half).
 
 let tdb: TestDatabase;
@@ -80,7 +80,7 @@ describe('Booking', () => {
     const result = await service.book(ask(types, place, car, tue('09:00')));
 
     // objectContaining, so a field added later (the time zone for the
-    // response in step 5, say) doesn't break this test.
+    // response, say) doesn't break this test.
     expect(result).toEqual({
       kind: 'created',
       appointment: expect.objectContaining({
@@ -358,7 +358,7 @@ describe('Booking', () => {
   });
 });
 
-// The pure rules are unit tested in step 1. These check that the service
+// The pure rules are unit tested on their own. These check that the service
 // hands them the dealership's own zone and opening hours from the database.
 describe('Time rules through the service', () => {
   it('AC-12 OIL Mon 8th at 16:30 ends exactly at closing: created', async () => {

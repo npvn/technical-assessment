@@ -11,7 +11,8 @@ export interface BookingRequest {
   startTime: Date;
   preferredTechnicianId?: string | null;
   // The Idempotency-Key header, already checked by the HTTP layer. Missing
-  // and null both mean the request has no key (A15).
+  // and null both mean the request has no key. Same key and same request returns the
+  // original appointment (A15).
   idempotencyKey?: string | null;
 }
 
@@ -31,9 +32,9 @@ export interface Appointment {
 }
 
 // The error codes the service can answer with, in the SPEC "Order of checks".
-// The HTTP layer (step 5) maps them to 404, 422 and 409.
+// The HTTP layer maps them to 404, 422 and 409.
 // IDEMPOTENCY_KEY_REUSED comes first of all of them when it applies (step 2
-// of the order), it sits at the end here only because it came in with step 8.
+// of the order), it only sits at the end of this list.
 export type BookingErrorCode =
   | 'DEALERSHIP_NOT_FOUND'
   | 'SERVICE_TYPE_NOT_FOUND'
@@ -57,8 +58,8 @@ export type BookingErrorCode =
 export type ContendedReason =
   'attempt_cap' | 'time_budget' | 'db_retries_exhausted' | 'statement_timeout';
 
-// No HTTP status codes in here on purpose, that mapping is step 5's job.
-// 'replayed' is produced by the idempotency lookup in step 8.
+// No HTTP status codes in here on purpose, the HTTP layer maps these.
+// 'replayed' is produced by the idempotency lookup.
 export type BookingResult =
   | { kind: 'created'; appointment: Appointment }
   | { kind: 'replayed'; appointment: Appointment }

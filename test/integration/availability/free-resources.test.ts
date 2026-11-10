@@ -206,7 +206,7 @@ describe('findFreeResources', () => {
     });
   });
 
-  // A16: the least flexible technician goes first, so the ones with more
+  // The least flexible technician goes first (A16), so the ones with more
   // skills stay free for jobs only they can do. Ties go to the lowest id. The
   // count is of all the technician's skills, not only the one asked for.
   // Added in reverse order, so the table's own order can't pass the test.

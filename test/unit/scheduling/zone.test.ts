@@ -1,7 +1,7 @@
 import { toZone } from '../../../src/scheduling/zone.js';
 import { LONDON, at } from './fixtures.js';
 
-// Added after mutation testing (PLAN step 10). The other tests only check
+// Added after mutation testing. The other tests only check
 // that the zone name is in the error, not the reason after it.
 describe('toZone', () => {
   it('the error for an unknown zone carries the reason Luxon gives', () => {

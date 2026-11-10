@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { BookingRequest } from './booking.types.js';
 
-// The Idempotency-Key header and the request hash (A15, ADR 001 decision 3).
+// The Idempotency-Key header and the request hash (ADR 001 decision 3). A key is scoped to the customer and a retry with the
+// same request gets the original appointment back (A15).
 // Both are pure, so they are unit tested without Nest or a database.
 
 export type IdempotencyKeyCheck = { ok: true; key: string | null } | { ok: false; message: string };

@@ -20,7 +20,7 @@ import {
 } from '../integration/appointments/world.js';
 import { SettableClock, bootApp, expectProblem, type BootOptions } from './app.js';
 
-// Health, metrics and logs (step 7, AC-34 to AC-36) through the real
+// Health, metrics and logs (AC-34 to AC-36) through the real
 // AppModule. Each describe boots its own app, so the counters start at zero
 // and "exactly 1" really means one request. That also only works if every
 // app has its own metrics registry, not the process wide default one.

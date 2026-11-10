@@ -228,7 +228,7 @@ export class BookingService {
   //    come first, or a replay would see "its own" vehicle as busy and get
   //    a 409.
   // 2. is the vehicle booked at an overlapping time anywhere?
-  // 3. is the preferred technician busy? No fallback to someone else (A5).
+  // 3. is the preferred technician busy? No fallback to someone else, the customer asked for that person (A5).
   // 4. is there no free bay, or no free qualified technician?
   // Otherwise insert the first free pair. Zero rows back means somebody got
   // in first, and the next attempt's read works out what changed.
@@ -272,7 +272,7 @@ export class BookingService {
     }
 
     // The lists are already in pick order: lowest bay id, and the technician
-    // with the fewest skills, then the lowest id (A16).
+    // with the fewest skills, then the lowest id, so generalists stay free (A16).
     const bay = read.bayIds[0];
     const technician = preferredTechnicianId ?? read.technicianIds[0];
     if (bay === undefined || technician === undefined) {
@@ -386,7 +386,7 @@ function checkLookup(request: BookingRequest, lookup: BookingLookup): LookupChec
   }
 
   // No bay at all, or nobody with the skill at all. Permanent, so a 422 and
-  // not a 409 (A20).
+  // not a 409, because a 409 means "try another time" (A20).
   if (!lookup.offersService) return refuse('SERVICE_NOT_OFFERED');
 
   return { ok: true, dealership, serviceType };

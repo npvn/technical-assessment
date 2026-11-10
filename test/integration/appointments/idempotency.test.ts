@@ -272,7 +272,7 @@ describe('Idempotency-Key', () => {
     const mine = created(second);
     expect(mine.id).not.toBe(first.id);
     expect(mine.customerId).toBe(c2.customerId);
-    // Both rows carry K, one per customer. Keys are per customer (A15).
+    // Both rows carry K, one per customer. A key is scoped to one customer (A15).
     const rows = await rowsWithKey(key);
     expect(rows.map((r) => [r.id, r.customer_id])).toEqual([
       [first.id, c1.customerId],

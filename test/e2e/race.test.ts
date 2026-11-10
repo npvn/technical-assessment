@@ -19,9 +19,9 @@ import { SettableClock, bootApp, expectProblem } from './app.js';
 // own pg pool. The service level version is in
 // test/integration/appointments/concurrency.test.ts.
 //
-// The race has to really happen (CLAUDE.md rule 12). So the app's booking
-// store is the real PostgresBookingStore with the test barrier wrapped around
-// it: every request's first read waits until all 20 have read the slot as
+// A race test only counts if the race really happens, or it passes by luck.
+// So the app's booking store is the real PostgresBookingStore with the test
+// barrier wrapped around it: every request's first read waits until all 20 have read the slot as
 // free, and only then do they insert. From there only the exclusion
 // constraints can stop a double booking. Without the constraints this test
 // gives 20 x 201 (docs/evidence/teeth-checks.md).
