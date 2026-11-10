@@ -2,8 +2,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { Writable } from 'node:stream';
 import type { INestApplication } from '@nestjs/common';
-import { sql } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import request, { type Response } from 'supertest';
+import { DATABASE } from '../../src/common/database.module.js';
+import type { Database } from '../../src/db/types.js';
 import { databaseUrl } from '../support/database-url.js';
 import { insertCustomerWithVehicle } from '../support/fixtures.js';
 import { createTestDatabase, type TestDatabase } from '../support/test-database.js';
@@ -520,6 +522,54 @@ describe('the database is gone', () => {
 
     expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
     expect(res.headers['retry-after']).toBe('1');
+  });
+});
+
+// Every connection in the pool is busy (here the only one, held by an open
+// transaction). Without a connect timeout the request would queue forever,
+// past every other budget. With one it gets a 503 and can try again.
+describe('the pool has no free connection', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    app = await boot({ databaseUrl: testDb.url, poolSize: 1, connectTimeoutMs: 300 });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('POST /appointments is 503 SERVICE_UNAVAILABLE with Retry-After, quickly', async () => {
+    const place = await smallNorth();
+    const car = await insertCustomerWithVehicle(testDb.db);
+    const held = await app.get<Kysely<Database>>(DATABASE).startTransaction().execute();
+    let post: Promise<unknown> = Promise.resolve();
+    try {
+      const started = performance.now();
+      const sent = request(app.getHttpServer())
+        .post('/appointments')
+        .send(body(place, car, '2027-03-09T09:00:00Z'))
+        .then((res) => res);
+      post = sent.catch(() => {});
+      // Without the timeout the request waits for the held connection, so
+      // the test stops waiting after 3 s instead of hanging
+      const res = await Promise.race([
+        sent,
+        new Promise<string>((resolve) => setTimeout(() => resolve('no answer after 3 s'), 3_000)),
+      ]);
+
+      expect(typeof res === 'string' ? res : { status: res.status, code: res.body?.code }).toEqual({
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+      });
+      if (typeof res === 'string') return;
+      expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+      expect(res.headers['retry-after']).toBe('1');
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally {
+      await held.rollback().execute();
+      await post;
+    }
   });
 });
 

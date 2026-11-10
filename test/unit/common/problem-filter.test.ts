@@ -1,8 +1,22 @@
-import type { ArgumentsHost } from '@nestjs/common';
+import { Logger, type ArgumentsHost } from '@nestjs/common';
 import { ProblemFilter } from '../../../src/common/problem.filter.js';
 
 // The exception filter on its own, with a fake response. The e2e tests show
 // the same thing through the real app for one case each, this is the table.
+
+// The filter logs every 500 with its stack and every 503 with its code.
+// Caught here, so the test output stays readable and a test can look at
+// what was logged.
+let warn: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 class FakeResponse {
   statusCode = 0;
@@ -59,6 +73,7 @@ describe('the database is not there right now', () => {
     ['ENETUNREACH', 'no route to the network'],
     ['ENOTFOUND', 'the host name did not resolve'],
     ['EAI_AGAIN', 'the name lookup failed for now'],
+    ['DB_CONNECT_FAILED', 'our own code for a failed pool connect, see database.ts'],
   ])('%s (%s) is 503 SERVICE_UNAVAILABLE with Retry-After', (code) => {
     const res = answer(withCode(code));
 
@@ -79,6 +94,13 @@ describe('the database is not there right now', () => {
 
     expect(res.body).not.toContain('ECONNREFUSED');
     expect(res.body).not.toContain('10.0.0.7');
+  });
+
+  it('logs only the code, the message can carry the host and port', () => {
+    answer(withCode('ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.7:5432'));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]).toEqual(['database unavailable, code ECONNREFUSED']);
   });
 });
 

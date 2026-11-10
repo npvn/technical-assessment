@@ -1,13 +1,20 @@
 import { sql, type Kysely } from 'kysely';
 import { DEFAULT_BOOKING_CONFIG } from '../../../src/appointments/booking.config.js';
-import { PostgresBookingStore } from '../../../src/appointments/booking.store.js';
+import type { BookingRecord } from '../../../src/appointments/booking.observer.js';
+import { BookingService } from '../../../src/appointments/booking.service.js';
+import {
+  PostgresBookingStore,
+  type BookingStore,
+} from '../../../src/appointments/booking.store.js';
 import { createDatabase } from '../../../src/db/database.js';
 import type { Database } from '../../../src/db/types.js';
+import { FixedClock } from '../../../src/scheduling/index.js';
 import { insertAppointment } from '../../support/fixtures.js';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database.js';
 import { racingBookingService } from './race-barrier.js';
 import {
   NORTH,
+  NOW,
   SOUTH,
   ask,
   countOverlaps,
@@ -204,6 +211,166 @@ describe('Timeouts on the booking transaction', () => {
       expect(performance.now() - started).toBeLessThan(2_000);
     } finally {
       await blocker.rollback().execute();
+    }
+  });
+
+  // The same blocker, but now the lock timeout is long (10 s) and the
+  // statement timeout is short (200 ms). The insert waits on the lock, so
+  // the statement timeout is what ends it. The test pool's own session
+  // statement_timeout is 30 s, so a 57014 within a second can only come
+  // from the store's SET LOCAL. The pool sets the same value per session in
+  // the app, so this half only matters behind PgBouncer, and nothing else
+  // would notice it going missing.
+  it('statement_timeout is set on the attempt: an insert stuck behind an open clash throws 57014 quickly', async () => {
+    const w = newWorld(tdb.db, types);
+    const place = await w.place(NORTH, { name: 'North', bays: 1, technicians: [OIL, OIL] });
+    const [bay1] = place.bays as [string];
+    const [t1, t2] = place.technicians as [string, string];
+    const car = await w.car();
+    const other = await w.car();
+    const store = new PostgresBookingStore(tdb.db, {
+      ...DEFAULT_BOOKING_CONFIG,
+      lockTimeoutMs: 10_000,
+      statementTimeoutMs: 200,
+    });
+    const range = { start: tue('09:00'), end: tue('10:00') };
+
+    const blocker = await tdb.db.startTransaction().execute();
+    let insert: Promise<unknown> = Promise.resolve();
+    try {
+      await insertAppointment(blocker, {
+        dealershipId: place.id,
+        serviceTypeId: types.oil,
+        customerId: other.customerId,
+        vehicleId: other.vehicleId,
+        serviceBayId: bay1,
+        technicianId: t2,
+        startsAt: range.start,
+        endsAt: range.end,
+      });
+
+      insert = store
+        .runAttempt((attempt) =>
+          attempt.tryInsert({
+            dealershipId: place.id,
+            serviceTypeId: types.oil,
+            customerId: car.customerId,
+            vehicleId: car.vehicleId,
+            serviceBayId: bay1,
+            technicianId: t1,
+            range,
+          }),
+        )
+        .then(
+          () => 'inserted',
+          (error: unknown) => error,
+        );
+      // Without the SET LOCAL the insert would wait out the 10 s lock
+      // timeout, so the test gives up waiting after 2 s instead of hanging.
+      const outcome = await Promise.race([
+        insert,
+        new Promise((resolve) => setTimeout(() => resolve('still waiting after 2 s'), 2_000)),
+      ]);
+
+      expect(outcome).toMatchObject({ code: '57014' });
+    } finally {
+      await blocker.rollback().execute();
+      await insert;
+    }
+  });
+});
+
+// The retry of 40P01, 40001 and 55P03 (ADR 001 decision 6) on a real
+// database, not the fake store. An uncommitted row holds the only bay and
+// technician, so the first attempt's insert waits on it and gets 55P03 from
+// the 200 ms lock timeout. The test rolls the blocker back right after that
+// first failure and before the loop goes round again, so the retry finds the
+// pair free and books it. No timing luck involved, the wrapper below decides
+// when the blocker goes.
+describe('the retry on a real database', () => {
+  let tdb: TestDatabase;
+  let types: ServiceTypes;
+
+  beforeAll(async () => {
+    tdb = await createTestDatabase({ poolSize: 5 });
+    types = await insertServiceTypes(tdb.db);
+  });
+
+  afterAll(async () => {
+    await tdb?.destroy();
+  });
+
+  it('a lock timeout (55P03) rolls the attempt back, and the retry books once the blocker is gone', async () => {
+    const w = newWorld(tdb.db, types);
+    const place = await w.place(NORTH, { name: 'North', bays: 1, technicians: [OIL] });
+    const [bay1] = place.bays as [string];
+    const [t1] = place.technicians as [string];
+    const car = await w.car();
+    const other = await w.car();
+    const config = { ...DEFAULT_BOOKING_CONFIG, lockTimeoutMs: 200, loopBudgetMs: 30_000 };
+
+    const blocker = await tdb.db.startTransaction().execute();
+    let blockerOpen = true;
+    const rollBackBlocker = async () => {
+      if (!blockerOpen) return;
+      blockerOpen = false;
+      await blocker.rollback().execute();
+    };
+
+    // The real store, plus a note of how each attempt ended. When the first
+    // one fails, the blocker is rolled back before the error reaches the loop.
+    const real = new PostgresBookingStore(tdb.db, config);
+    const attemptErrors: (string | null)[] = [];
+    const store: BookingStore = {
+      lookup: (request) => real.lookup(request),
+      runAttempt: async (work) => {
+        try {
+          const result = await real.runAttempt(work);
+          attemptErrors.push(null);
+          return result;
+        } catch (error) {
+          attemptErrors.push((error as { code?: string }).code ?? 'no code');
+          await rollBackBlocker();
+          throw error;
+        }
+      },
+    };
+    const records: BookingRecord[] = [];
+    const service = new BookingService(store, new FixedClock(NOW), config, {
+      record: (record) => records.push(record),
+    });
+
+    try {
+      await insertAppointment(blocker, {
+        dealershipId: place.id,
+        serviceTypeId: types.oil,
+        customerId: other.customerId,
+        vehicleId: other.vehicleId,
+        serviceBayId: bay1,
+        technicianId: t1,
+        startsAt: tue('09:00'),
+        endsAt: tue('10:00'),
+      });
+
+      // A throw is kept as the result, so a missing retry shows up in the
+      // assertions below and not as a bare 55P03
+      const result = await service
+        .book(ask(types, place, car, tue('09:00')))
+        .catch((error: unknown) => error);
+
+      expect(attemptErrors).toEqual(['55P03', null]);
+      expect(result).toMatchObject({
+        kind: 'created',
+        appointment: { serviceBayId: bay1, technicianId: t1, vehicleId: car.vehicleId },
+      });
+      expect(records).toEqual([
+        expect.objectContaining({ outcome: 'created', attempts: 2, lostRaces: 0 }),
+      ]);
+      // The failed attempt left nothing behind and the blocker is gone
+      expect(await countRows(tdb.db, { vehicleId: car.vehicleId })).toBe(1);
+      expect(await countRows(tdb.db, { vehicleId: other.vehicleId })).toBe(0);
+    } finally {
+      await rollBackBlocker();
     }
   });
 });

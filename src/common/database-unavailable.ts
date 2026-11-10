@@ -1,3 +1,5 @@
+import { DB_CONNECT_FAILED } from '../db/database.js';
+
 // Errors that mean "the database isn't there right now". It is down,
 // restarting or failing over, it has no connections left, or it was too slow
 // to answer. None of that is a bug in the request or in the code, and the
@@ -8,7 +10,13 @@
 // Only the code on the error is looked at, never the message text. pg puts
 // the SQLSTATE in `code`, Node puts its system error code there (also on the
 // AggregateError it throws when "localhost" has two addresses and both
-// refuse), and Kysely passes both on as they are.
+// refuse), and Kysely passes both on as they are. A failed pool connect with
+// no code of its own gets DB_CONNECT_FAILED (see database.ts).
+//
+// Known gap: a connection that dies in the middle of a query gives
+// "Connection terminated unexpectedly" with no code, so it is still a 500.
+// pg doesn't tell it apart from other errors, and matching the message would
+// be guessing.
 
 // 57P01 admin shutdown (a restart or failover), 57P02 crash shutdown, 57P03
 // cannot connect now (still starting up), 53300 too many connections, 57014
@@ -33,7 +41,12 @@ const NETWORK_CODES = new Set([
 export function isDatabaseUnavailable(error: unknown): boolean {
   const code = errorCode(error);
   if (code === undefined) return false;
-  return SQLSTATES.has(code) || CONNECTION_EXCEPTION.test(code) || NETWORK_CODES.has(code);
+  return (
+    code === DB_CONNECT_FAILED ||
+    SQLSTATES.has(code) ||
+    CONNECTION_EXCEPTION.test(code) ||
+    NETWORK_CODES.has(code)
+  );
 }
 
 // The string in `code`, if the error has one.

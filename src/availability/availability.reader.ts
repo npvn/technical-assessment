@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { Database } from '../db/types.js';
 import type { OpeningWindow, TimeRange } from '../scheduling/index.js';
 import type { BusyAppointment } from './compute-slots.js';
@@ -63,13 +63,18 @@ export class AvailabilityReader {
 
     // Every active appointment at the dealership that overlaps the local
     // day, half open like everywhere else. Same status filter as the
-    // exclusion constraints (cancelled holds nothing). The starts_at bound
-    // lets Postgres use the (dealership_id, starts_at) index.
+    // exclusion constraints (cancelled holds nothing). The two starts_at
+    // bounds let Postgres use the (dealership_id, starts_at) index as a
+    // range. The lower one is safe because no row is longer than 600 minutes
+    // (CHECK appointments_at_most_600_minutes in 0003), so a row that starts
+    // earlier than that has ended before the day starts. Without it the
+    // query read every appointment the dealership ever had.
     const appointments = await this.db
       .selectFrom('appointments')
       .select(['service_bay_id', 'technician_id', 'starts_at', 'ends_at'])
       .where('dealership_id', '=', dealershipId)
       .where('status', '<>', 'cancelled')
+      .where('starts_at', '>', sql<Date>`${day.start}::timestamptz - interval '600 minutes'`)
       .where('starts_at', '<', day.end)
       .where('ends_at', '>', day.start)
       .execute();

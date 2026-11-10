@@ -27,6 +27,7 @@ const DATABASE_WITH_POOL = Symbol('DATABASE_WITH_POOL');
           poolSize: config.dbPoolSize,
           statementTimeoutMs: config.booking.statementTimeoutMs,
           lockTimeoutMs: config.booking.lockTimeoutMs,
+          connectTimeoutMs: config.dbConnectTimeoutMs,
         });
         keepRunningOnIdleErrors(both.pool);
         return both;

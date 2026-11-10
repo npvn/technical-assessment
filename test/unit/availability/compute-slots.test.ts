@@ -1,5 +1,6 @@
 import {
   computeSlots,
+  localDayRange,
   type BusyAppointment,
   type SlotInput,
 } from '../../../src/availability/compute-slots.js';
@@ -210,5 +211,51 @@ describe('computeSlots', () => {
     const result = slots(northDay('2027-03-08', { timeZone: SYDNEY, openingHours: HARBOUR_HOURS }));
     expect(result).toHaveLength(33);
     expect(result).toEqual(every15('2027-03-07T21:00:00Z', '2027-03-08T05:00:00Z'));
+  });
+});
+
+// The day query's window. In Cairo the clocks jump from 00:00 to 01:00 on
+// Fri 24 April 2026, so that local day starts at 01:00 and is 23 hours long.
+// It still ends at the next midnight, not at 01:00 the next day, or a few
+// starts would be listed under both dates.
+describe('localDayRange', () => {
+  it('a day that skips midnight (Cairo, 24 April 2026) runs from 01:00 to the next midnight', () => {
+    expect(localDayRange('2026-04-24', 'Africa/Cairo')).toEqual({
+      start: new Date('2026-04-23T22:00:00Z'),
+      end: new Date('2026-04-24T21:00:00Z'),
+    });
+  });
+
+  it('the day after starts exactly where that one ends', () => {
+    const skipped = localDayRange('2026-04-24', 'Africa/Cairo');
+    const next = localDayRange('2026-04-25', 'Africa/Cairo');
+    expect(next.start).toEqual(skipped.end);
+  });
+
+  // What a client would see: Cairo skips midnight again on Fri 30 April
+  // 2027, inside the 90 day window. Open around the clock on Friday and
+  // Saturday, the first hour of Saturday must only be listed on Saturday.
+  it('no start is listed under two dates (Cairo, Fri 30 April 2027)', () => {
+    const allDay = [5, 6].map((isoWeekday) => ({
+      isoWeekday,
+      opensAt: '00:00:00',
+      closesAt: '23:45:00',
+    }));
+    const day = (date: string) =>
+      slots(northDay(date, { timeZone: 'Africa/Cairo', openingHours: allDay }));
+
+    const friday = day('2027-04-30');
+    const saturday = day('2027-05-01');
+
+    expect(friday.filter((start) => saturday.includes(start))).toEqual([]);
+    expect(friday.at(-1)).toBe('2027-04-30T19:45:00Z');
+    expect(saturday[0]).toBe('2027-04-30T21:00:00Z');
+  });
+
+  it('a normal day is 24 hours from local midnight', () => {
+    expect(localDayRange('2027-03-09', 'Europe/London')).toEqual({
+      start: new Date('2027-03-09T00:00:00Z'),
+      end: new Date('2027-03-10T00:00:00Z'),
+    });
   });
 });

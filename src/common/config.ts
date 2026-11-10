@@ -5,6 +5,10 @@ export interface AppConfig {
   databaseUrl: string;
   port: number;
   dbPoolSize: number;
+  // How long a query waits to get a pool connection before it fails. pg
+  // waits forever by default, so a full pool would queue requests with no
+  // limit, past the booking budget and every other one.
+  dbConnectTimeoutMs: number;
   booking: BookingConfig;
 }
 
@@ -22,6 +26,7 @@ export function loadConfig(env: Env): AppConfig {
     databaseUrl,
     port: positiveInt(env, 'PORT', 3000),
     dbPoolSize: positiveInt(env, 'DB_POOL_SIZE', 10),
+    dbConnectTimeoutMs: positiveInt(env, 'DB_CONNECT_TIMEOUT_MS', 2_000),
     booking: {
       lockTimeoutMs: positiveInt(env, 'BOOKING_LOCK_TIMEOUT_MS', 2_000),
       statementTimeoutMs: positiveInt(env, 'BOOKING_STATEMENT_TIMEOUT_MS', 5_000),

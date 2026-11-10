@@ -8,6 +8,7 @@ describe('loadConfig', () => {
       databaseUrl: URL,
       port: 3000,
       dbPoolSize: 10,
+      dbConnectTimeoutMs: 2_000,
       booking: { lockTimeoutMs: 2_000, statementTimeoutMs: 5_000, loopBudgetMs: 5_000 },
     });
   });
@@ -18,6 +19,7 @@ describe('loadConfig', () => {
         DATABASE_URL: URL,
         PORT: '8080',
         DB_POOL_SIZE: '25',
+        DB_CONNECT_TIMEOUT_MS: '750',
         BOOKING_LOCK_TIMEOUT_MS: '1500',
         BOOKING_STATEMENT_TIMEOUT_MS: '4000',
         BOOKING_LOOP_BUDGET_MS: '30000',
@@ -26,6 +28,7 @@ describe('loadConfig', () => {
       databaseUrl: URL,
       port: 8080,
       dbPoolSize: 25,
+      dbConnectTimeoutMs: 750,
       booking: { lockTimeoutMs: 1_500, statementTimeoutMs: 4_000, loopBudgetMs: 30_000 },
     });
   });
@@ -47,6 +50,28 @@ describe('loadConfig', () => {
   it.each(['-1', '0'])('fails fast on a pool size below 1 (%s)', (value) => {
     expect(() => loadConfig({ DATABASE_URL: URL, DB_POOL_SIZE: value })).toThrow(/DB_POOL_SIZE/);
   });
+
+  // How long a query waits for a free pool connection before it gives up.
+  // Without it a full pool queues requests with no limit at all.
+  it('waits at most 2 s for a database connection by default', () => {
+    expect(loadConfig({ DATABASE_URL: URL }).dbConnectTimeoutMs).toBe(2_000);
+  });
+
+  it('reads DB_CONNECT_TIMEOUT_MS', () => {
+    expect(loadConfig({ DATABASE_URL: URL, DB_CONNECT_TIMEOUT_MS: '750' }).dbConnectTimeoutMs).toBe(
+      750,
+    );
+  });
+
+  // 0 would mean "wait forever" to pg, the thing this setting is there to stop
+  it.each(['0', '-1', 'abc', '1.5', ''])(
+    'fails fast on a DB_CONNECT_TIMEOUT_MS that is not a whole number of 1 or more (%j)',
+    (value) => {
+      expect(() => loadConfig({ DATABASE_URL: URL, DB_CONNECT_TIMEOUT_MS: value })).toThrow(
+        /DB_CONNECT_TIMEOUT_MS/,
+      );
+    },
+  );
 });
 
 describe('loadLogConfig', () => {

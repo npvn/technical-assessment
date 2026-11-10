@@ -50,6 +50,8 @@ export interface BootOptions {
   // DB_POOL_SIZE for the app. 5 is plenty for one request at a time, a race
   // of N parallel requests needs more than N.
   poolSize?: number;
+  // DB_CONNECT_TIMEOUT_MS for the app. Unset means the app's default.
+  connectTimeoutMs?: number;
   // Where the app's JSON log lines go, for a test that reads them back.
   logs?: Writable;
   // LOG_LEVEL for the app. Defaults to silent so test output stays readable,
@@ -62,6 +64,10 @@ export interface BootOptions {
 export async function bootApp(options: BootOptions): Promise<INestApplication> {
   process.env.DATABASE_URL = options.databaseUrl;
   process.env.DB_POOL_SIZE = String(options.poolSize ?? 5);
+  // Set or cleared on every boot, so one test's value can't leak into the
+  // next app
+  if (options.connectTimeoutMs === undefined) delete process.env.DB_CONNECT_TIMEOUT_MS;
+  else process.env.DB_CONNECT_TIMEOUT_MS = String(options.connectTimeoutMs);
   process.env.LOG_LEVEL = options.logLevel ?? (options.logs ? 'info' : 'silent');
   // nestjs-pino builds one pino-http instance per process and keeps it, so
   // the first app in a test file would decide the level and the destination

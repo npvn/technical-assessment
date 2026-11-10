@@ -72,11 +72,13 @@ export function computeSlots(input: SlotInput): Date[] {
 }
 
 // The span of the local day in UTC, for the day query. On a clock change day
-// it's 23 or 25 hours long.
+// it's 23 or 25 hours long. The end is the start of the next local day, not
+// "start plus one day". In a zone that skips midnight the day starts at
+// 01:00, and plus one day would land on 01:00 the next day.
 export function localDayRange(date: string, timeZone: string): TimeRange {
   const start = DateTime.fromISO(date, { zone: timeZone }).startOf('day');
   if (!start.isValid) {
     throw new Error(`Bad date "${date}" or time zone "${timeZone}"`);
   }
-  return { start: start.toJSDate(), end: start.plus({ days: 1 }).toJSDate() };
+  return { start: start.toJSDate(), end: start.plus({ days: 1 }).startOf('day').toJSDate() };
 }

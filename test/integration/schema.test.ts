@@ -392,3 +392,30 @@ describe('other schema checks from the step 2 notes', () => {
     );
   });
 });
+
+// No service is longer than 600 minutes (the CHECK on service_types), and
+// 0003 says the same about the rows themselves. The availability day query
+// leans on it for its lower bound on starts_at, so a longer raw row (from
+// psql, a script, a future multi day job) would be missed there.
+describe('appointment length', () => {
+  it('a row longer than 600 minutes is refused (23514 appointments_at_most_600_minutes)', async () => {
+    const w = await buildWorld();
+    await expectRefused(
+      insertAppointment(
+        tdb.db,
+        w.row({ startsAt: '2027-03-09T08:00:00Z', endsAt: '2027-03-09T18:01:00Z' }),
+      ),
+      '23514',
+      'appointments_at_most_600_minutes',
+    );
+  });
+
+  it('a row of exactly 600 minutes is accepted', async () => {
+    const w = await buildWorld();
+    await insertAppointment(
+      tdb.db,
+      w.row({ startsAt: '2027-03-09T08:00:00Z', endsAt: '2027-03-09T18:00:00Z' }),
+    );
+    expect(await countAppointments({ customerId: w.c1.customerId })).toBe(1);
+  });
+});

@@ -245,6 +245,32 @@ describe('GET /availability', () => {
     });
   });
 
+  // The day query only reads rows that start less than 600 minutes before
+  // the local day, so it can use the index instead of the whole history. A
+  // row is never longer than that (0003), so nothing that overlaps the day
+  // is missed. This row is exactly 600 minutes and ends one minute into the
+  // day, so a bound even one minute too tight would show 00:00 as free.
+  it('AC-33 a 600 minute row from the day before still blocks the first start of the day', async () => {
+    const world = newWorld(testDb.db, types);
+    const allNight = await world.place(OTHER, {
+      name: 'All night',
+      hours: [{ isoWeekday: 2, opens: '00:00', closes: '10:00' }],
+      bays: 1,
+      technicians: [['OIL_SERVICE']],
+    });
+    await world.existing({
+      place: allNight,
+      bay: allNight.bays[0]!,
+      technician: allNight.technicians[0]!,
+      start: new Date('2027-03-08T14:01:00Z'),
+      end: new Date('2027-03-09T00:01:00Z'),
+    });
+
+    const res = await oilAt(allNight, '2027-03-09').expect(200);
+
+    expect(startsOf(res)).toEqual(every15('2027-03-09T00:15:00Z', '2027-03-09T09:00:00Z'));
+  });
+
   describe('unknown ids are 404', () => {
     it('AC-33 an unknown dealership is 404 DEALERSHIP_NOT_FOUND', async () => {
       const res = await availability({
