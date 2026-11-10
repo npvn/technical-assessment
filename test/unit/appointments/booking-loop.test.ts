@@ -189,9 +189,10 @@ describe('AC-25 the hard cap and the time budget', () => {
     );
 
     expect(await book()).toEqual({ kind: 'contended', reason: 'time_budget' });
-    // 2 s, 4 s, 6 s: it may not start another attempt once 5 s are gone.
-    expect(store.inserts.length).toBeGreaterThanOrEqual(1);
-    expect(store.inserts.length).toBeLessThanOrEqual(3);
+    // Each insert takes 2 s. Attempts start at 0, 2 and 4 s, and at 6 s the
+    // 5 s budget is gone, so exactly 3. A wrong budget (say the 2 s lock
+    // timeout) would give a different count.
+    expect(store.inserts).toHaveLength(3);
   });
 });
 
