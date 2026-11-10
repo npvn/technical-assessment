@@ -155,6 +155,24 @@ describe('AC-25 the hard cap and the time budget', () => {
     expect(store.inserts).toHaveLength(4);
   });
 
+  it('AC-25 with a preferred technician T is 1, so the cap is B + 1 + 2', async () => {
+    // B = 2 and five free technicians, but only the preferred one can be
+    // used, so the cap is 2 + 1 + 2 = 5, not 2 + 5 + 2.
+    const { store, book } = setup({
+      read: () => freeRead({ bayIds: ids('bay', 2), technicianIds: ids('tech', 5) }),
+      insert: alwaysLoses,
+    });
+    store.lookupResult = goodLookup({
+      preferredTechnician: { id: 'tech-1', dealershipId: 'north', skillCodes: ['OIL_SERVICE'] },
+    });
+
+    expect(await book({ preferredTechnicianId: 'tech-1' })).toEqual({
+      kind: 'contended',
+      reason: 'attempt_cap',
+    });
+    expect(store.inserts).toHaveLength(5);
+  });
+
   it('AC-25 when the time budget runs out it answers time_budget, never a 409', async () => {
     // 50 bays and 50 technicians give a cap of 102, far away. Every lost
     // insert takes 2 s of the 5 s budget, so the budget has to stop it.
@@ -205,10 +223,61 @@ describe('AC-41 database errors that say nothing about free slots', () => {
       });
 
       expect(await book()).toEqual({ kind: 'contended', reason: 'db_retries_exhausted' });
-      // The budget is 3 retries, so it stops by the fourth error at the latest.
-      expect(store.inserts.length).toBeLessThanOrEqual(4);
+      // The budget is 3 retries, so the fourth error is the last insert.
+      expect(store.inserts).toHaveLength(4);
     },
   );
+
+  it('AC-41 the insert throws three times and then succeeds: created after exactly 4 inserts', async () => {
+    const { store, book } = setup({
+      read: () => freeRead(),
+      insert: (n, booking) => {
+        if (n <= 3) throw pgError('40P01');
+        return storedFrom(booking, 'appointment-1');
+      },
+    });
+
+    expect(await book()).toEqual({
+      kind: 'created',
+      appointment: expect.objectContaining({ id: 'appointment-1' }),
+    });
+    expect(store.inserts).toHaveLength(4);
+  });
+
+  it('AC-41 the database errors are counted per request in total, not only in a row', async () => {
+    // Errors and lost races take turns, so there are never two errors in a
+    // row. The cap (50 + 50 + 2) is far away. The fourth error still ends it.
+    const { store, book } = setup({
+      read: () => freeRead({ bayIds: ids('bay', 50), technicianIds: ids('tech', 50) }),
+      insert: (n) => {
+        if (n % 2 === 1) throw pgError('40001');
+        return null;
+      },
+    });
+
+    expect(await book()).toEqual({ kind: 'contended', reason: 'db_retries_exhausted' });
+    expect(store.inserts).toHaveLength(7);
+  });
+
+  it('AC-41 database errors do not count towards the attempt cap', async () => {
+    // B = 1 and T = 1, so the cap is 4 attempts that got an answer from the
+    // insert. The 3 errors first don't use any of them, so the 4th real
+    // attempt (the 7th insert) still runs and books.
+    const { store, book } = setup({
+      read: () => freeRead({ bayIds: ids('bay', 1), technicianIds: ids('tech', 1) }),
+      insert: (n, booking) => {
+        if (n <= 3) throw pgError('55P03');
+        if (n <= 6) return null;
+        return storedFrom(booking, 'appointment-1');
+      },
+    });
+
+    expect(await book()).toEqual({
+      kind: 'created',
+      appointment: expect.objectContaining({ id: 'appointment-1' }),
+    });
+    expect(store.inserts).toHaveLength(7);
+  });
 
   it('AC-41 57014 once: statement_timeout straight away, no retry', async () => {
     const { store, book } = setup({

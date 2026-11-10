@@ -4,6 +4,7 @@ import type { BookingService } from '../../../src/appointments/booking.service.j
 import { PostgresBookingStore } from '../../../src/appointments/booking.store.js';
 import { createDatabase } from '../../../src/db/database.js';
 import type { Database } from '../../../src/db/types.js';
+import { insertAppointment } from '../../support/fixtures.js';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database.js';
 import {
   NORTH,
@@ -127,6 +128,72 @@ describe('Concurrency', () => {
     expect(tally(results)).toEqual({ created: 1, VEHICLE_ALREADY_BOOKED: 1 });
     expect(await countRows(tdb.db, { vehicleId: car.vehicleId })).toBe(1);
     expect(await countOverlaps(tdb.db)).toBe(0);
+  });
+});
+
+// The booking transaction sets its own lock_timeout with SET LOCAL. Shown by
+// behaviour: another transaction holds an overlapping row on the same bay and
+// doesn't commit, so the insert has to wait for it. The test database's
+// session default is 10 s, so failing within about a second proves the
+// store's 200 ms really reached the booking transaction.
+describe('Timeouts on the booking transaction', () => {
+  let tdb: TestDatabase;
+  let types: ServiceTypes;
+
+  beforeAll(async () => {
+    tdb = await createTestDatabase({ poolSize: 5 });
+    types = await insertServiceTypes(tdb.db);
+  });
+
+  afterAll(async () => {
+    await tdb?.destroy();
+  });
+
+  it('lock_timeout is set on the attempt: an insert stuck behind an open clash on the same bay throws 55P03 quickly', async () => {
+    const w = newWorld(tdb.db, types);
+    const place = await w.place(NORTH, { name: 'North', bays: 1, technicians: [OIL, OIL] });
+    const [bay1] = place.bays as [string];
+    const [t1, t2] = place.technicians as [string, string];
+    const car = await w.car();
+    const other = await w.car();
+    const store = new PostgresBookingStore(tdb.db, {
+      ...DEFAULT_BOOKING_CONFIG,
+      lockTimeoutMs: 200,
+    });
+    const range = { start: tue('09:00'), end: tue('10:00') };
+
+    // The blocker: an overlapping row on bay 1, inserted and left uncommitted.
+    const blocker = await tdb.db.startTransaction().execute();
+    try {
+      await insertAppointment(blocker, {
+        dealershipId: place.id,
+        serviceTypeId: types.oil,
+        customerId: other.customerId,
+        vehicleId: other.vehicleId,
+        serviceBayId: bay1,
+        technicianId: t2,
+        startsAt: range.start,
+        endsAt: range.end,
+      });
+
+      const started = performance.now();
+      await expect(
+        store.runAttempt((attempt) =>
+          attempt.tryInsert({
+            dealershipId: place.id,
+            serviceTypeId: types.oil,
+            customerId: car.customerId,
+            vehicleId: car.vehicleId,
+            serviceBayId: bay1,
+            technicianId: t1,
+            range,
+          }),
+        ),
+      ).rejects.toMatchObject({ code: '55P03' });
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally {
+      await blocker.rollback().execute();
+    }
   });
 });
 
