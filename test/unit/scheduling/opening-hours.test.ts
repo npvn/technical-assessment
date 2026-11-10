@@ -139,4 +139,19 @@ describe('fitsOpeningHours', () => {
       );
     }
   });
+
+  // Cuba puts the clocks back at 01:00 to 00:00 on Sun 1 November 2026, so
+  // that midnight happens twice. Sat 31 October 23:45 local (-04:00) is
+  // 03:45Z, and a 15 minute job ends at Sunday 00:00 local, which is the next
+  // date. Luxon's end of that Saturday lands an hour into Sunday, so a check
+  // built on it took the job as same day and read its end as 00:00, under any
+  // closing time.
+  it('a job ending at the repeated midnight in Havana is on the next date (Sat 31 October 2026)', () => {
+    const saturday = [{ isoWeekday: 6, opensAt: '08:00:00', closesAt: '17:30:00' }];
+    const lateJob = range('2026-11-01T03:45:00Z', '2026-11-01T04:00:00Z');
+    expect(fitsOpeningHours(lateJob, 'America/Havana', saturday)).toBe(false);
+    // An ordinary Saturday afternoon job that day still fits, 16:30 to 17:30 local
+    const afternoonJob = range('2026-10-31T20:30:00Z', '2026-10-31T21:30:00Z');
+    expect(fitsOpeningHours(afternoonJob, 'America/Havana', saturday)).toBe(true);
+  });
 });

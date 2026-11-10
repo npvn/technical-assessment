@@ -53,7 +53,11 @@ export function fitsOpeningHours(
 
   const window = windows.find((w) => w.isoWeekday === start.weekday);
   if (!window) return false;
-  if (!start.hasSame(end, 'day')) return false;
+  // Compares the local dates as text. Luxon's hasSame goes through endOf('day'),
+  // and on a night where the clocks go back to a second midnight (Havana, Sat
+  // 31 October 2026) that end lands an hour into the next day. An end at
+  // exactly the next midnight is on the next date, so it doesn't fit.
+  if (start.toISODate() !== end.toISODate()) return false;
 
   return (
     wallTimeOf(start) >= parseWallTime(window.opensAt) &&
