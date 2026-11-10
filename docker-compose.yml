@@ -15,6 +15,11 @@ services:
 
   api:
     build: .
+    # Migrations and seed run on every start. Both are safe to run again: the
+    # migrator skips what is applied, the seed inserts with ON CONFLICT DO
+    # NOTHING. If either fails, the API doesn't start on a half set up database.
+    command: ['sh', '-c', 'node dist/db/migrate.js && node dist/db/seed.js && node dist/main.js']
+    restart: on-failure
     environment:
       PORT: 3000
       DATABASE_URL: postgres://scheduler:scheduler@db:5432/scheduler
