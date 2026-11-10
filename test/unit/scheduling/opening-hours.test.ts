@@ -102,4 +102,41 @@ describe('fitsOpeningHours', () => {
       fitsOpeningHours(oilAt('2027-03-09T09:00:00Z'), 'Mars/Nowhere', NORTH_HOURS),
     ).toThrow(/Mars\/Nowhere/);
   });
+
+  // The tests below were added after mutation testing (PLAN step 10) showed
+  // these cases had no test.
+
+  it('opening and closing times with seconds are exact to the second', () => {
+    // Postgres `time` can hold seconds, so 08:00:30 means 08:00:30 and not 08:00.
+    const hours = [{ isoWeekday: 1, opensAt: '08:00:30', closesAt: '17:30:30' }];
+    const fits = (startIso: string, endIso: string) =>
+      fitsOpeningHours(range(startIso, endIso), LONDON, hours);
+    expect(fits('2027-03-08T08:00:30Z', '2027-03-08T09:00:30Z')).toBe(true);
+    expect(fits('2027-03-08T08:00:29Z', '2027-03-08T09:00:29Z')).toBe(false);
+    expect(fits('2027-03-08T16:30:30Z', '2027-03-08T17:30:30Z')).toBe(true);
+    expect(fits('2027-03-08T16:30:31Z', '2027-03-08T17:30:31Z')).toBe(false);
+  });
+
+  it('seconds in the range count against whole minute opening hours', () => {
+    // One second short of 17:30 closing fits, 30 seconds past it doesn't.
+    const early = range('2027-03-08T16:29:59Z', '2027-03-08T17:29:59Z');
+    const late = range('2027-03-08T16:30:30Z', '2027-03-08T17:30:30Z');
+    expect(fitsOpeningHours(early, LONDON, NORTH_HOURS)).toBe(true);
+    expect(fitsOpeningHours(late, LONDON, NORTH_HOURS)).toBe(false);
+  });
+
+  it('throws on an opening or closing time that is not HH:MM or HH:MM:SS', () => {
+    // The windows come from the database, so a bad one is a data bug and
+    // throws, the same as an unknown zone.
+    for (const bad of ['8:00', '108:00:00', '08:00:00x', '']) {
+      const badOpening = [{ isoWeekday: 1, opensAt: bad, closesAt: '17:30:00' }];
+      const badClosing = [{ isoWeekday: 1, opensAt: '08:00:00', closesAt: bad }];
+      expect(() => fitsOpeningHours(oilAt('2027-03-08T09:00:00Z'), LONDON, badOpening)).toThrow(
+        /Bad opening time/,
+      );
+      expect(() => fitsOpeningHours(oilAt('2027-03-08T09:00:00Z'), LONDON, badClosing)).toThrow(
+        /Bad opening time/,
+      );
+    }
+  });
 });

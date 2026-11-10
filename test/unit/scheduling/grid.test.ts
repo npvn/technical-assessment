@@ -45,4 +45,13 @@ describe('isOnGrid', () => {
       /Mars\/Nowhere/,
     );
   });
+
+  // Added after mutation testing (PLAN step 10). With a step that divides 60
+  // the hours drop out of the sum, so only a step like 45 checks that hours
+  // and minutes are added.
+  it('works for a step that does not divide the hour', () => {
+    // A 45 minute grid goes 00:00, 00:45, 01:30, 02:15 and so on.
+    expect(isOnGrid(at('2027-03-09T01:30:00Z'), LONDON, 45)).toBe(true);
+    expect(isOnGrid(at('2027-03-09T01:00:00Z'), LONDON, 45)).toBe(false);
+  });
 });
