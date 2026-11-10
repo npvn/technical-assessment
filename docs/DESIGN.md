@@ -19,8 +19,8 @@ flowchart LR
     subgraph api["NestJS API (stateless, one or more instances)"]
         appointments["appointments/ - controller, DTOs, booking service"]
         availability["availability/ - controller, free bay and technician queries"]
-        scheduling["scheduling/ - pure rules"]
-        common["common/ - errors, clock, config, logging, metrics, health"]
+        scheduling["scheduling/ - pure rules, clock"]
+        common["common/ - errors, config, logging, metrics, health"]
         db["db/ - Kysely, SQL migrations, seed"]
     end
 
@@ -47,7 +47,7 @@ What each part does:
 - **`availability/`.** The controller for `GET /availability` and the free bay and technician queries. The booking read uses exactly the constraint's range expression and status filter, so the read and the constraint agree on what "free" means. The day query behind `GET /availability` uses the same status filter, with the half-open overlap rule applied in code.
 - **`scheduling/`.** Pure functions (no Nest, Kysely or pg): overlap, opening hours in the dealership's zone, the grid and the booking window. They take the current time as a plain `now` argument, and the service gets it from the injected `Clock`, so the rules never read the system time.
 - **`db/`.** Kysely and its table types, the plain SQL migrations (the exclusion constraints live here) and the seed.
-- **`common/`.** Problem+json errors with a stable `code`, the injected clock, config, pino logging with a request id, Prometheus metrics and the health checks.
+- **`common/`.** Problem+json errors with a stable `code`, config, pino logging with a request id, Prometheus metrics and the health checks.
 - **PostgreSQL 16.** The only stateful part, and the thing that actually guarantees no double booking, through three exclusion constraints on `appointments`.
 - **Logs and metrics.** JSON logs to stdout for whatever collector the platform runs, metrics pulled by Prometheus from `/metrics`.
 
@@ -202,7 +202,7 @@ What happens on `POST /appointments`. When a request breaks more than one rule, 
    - the ordered list of free bays or of free qualified technicians is empty: 409 `SLOT_UNAVAILABLE`
    - otherwise `INSERT ... ON CONFLICT DO NOTHING RETURNING` the first pair (lowest bay id, then the free technician with the fewest skills, then lowest id, A16).
 6. **One row back** means booked: commit and return 201. **Zero rows** means someone else got in first, so go round again. The next read works out what changed.
-7. **The bound.** A request can lose at most B + T - 1 races (B free bays and T free technicians, counted from the lists in the first read). Past a hard cap of B + T + 2 attempts, or the 5 s loop budget, the answer is 503 `BOOKING_CONTENDED` with `Retry-After`, never a 409, because only a fresh read is allowed to say "no slot". Database errors that say nothing about free slots have their own small budget ([SPEC.md, Timeouts and 503](SPEC.md#timeouts-and-503)).
+7. **The bound.** A request can lose at most B + T - 1 races (B free bays and T free technicians, counted from the lists in the first read). Past a hard cap of B + T + 2 lost races (T is 1 with a preferred technician), or once the 5 s loop budget is gone before a new attempt, the answer is 503 `BOOKING_CONTENDED` with `Retry-After`, never a 409, because only a fresh read is allowed to say "no slot". Database errors that say nothing about free slots have their own small budget ([SPEC.md, Timeouts and 503](SPEC.md#timeouts-and-503)).
 
 Two requests racing for the same bay. Which branch B takes depends on whether another free pair is left when it reads again:
 
@@ -271,7 +271,8 @@ Errors are `application/problem+json` (RFC 9457) with a stable `code`. Clients s
 - **404** `DEALERSHIP_NOT_FOUND`, `SERVICE_TYPE_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `VEHICLE_NOT_FOUND`, `TECHNICIAN_NOT_FOUND`, `APPOINTMENT_NOT_FOUND`
 - **409** (not at this time, try another) `SLOT_UNAVAILABLE`, `VEHICLE_ALREADY_BOOKED`, `TECHNICIAN_UNAVAILABLE`
 - **422** (this request can never work as asked) `VEHICLE_NOT_OWNED_BY_CUSTOMER`, `OUTSIDE_OPENING_HOURS`, `START_NOT_ON_GRID`, `START_IN_PAST`, `BEYOND_BOOKING_HORIZON`, `SERVICE_NOT_OFFERED` (the dealership has no bay or no technician with the skill at all), `TECHNICIAN_NOT_ELIGIBLE` (the preferred technician works elsewhere or lacks the skill), `IDEMPOTENCY_KEY_REUSED`
-- **503** `BOOKING_CONTENDED` with `Retry-After`, whenever the server couldn't decide in time (loop cap or budget, database errors that prove nothing after 3 tries, a statement timeout). One public code because the client does the same thing each time, the metrics keep the reason apart (section 7).
+- **503** `BOOKING_CONTENDED` with `Retry-After`, whenever the server couldn't decide in time (loop cap or budget, database errors that prove nothing after 3 retries, a statement timeout). One public code because the client does the same thing each time, the metrics keep the reason apart (section 7).
+- **503** `SERVICE_UNAVAILABLE` with `Retry-After`, when the database isn't there right now outside the booking loop (a dropped or refused connection, no pool connection in time, a statement timeout in a lookup). A 500 means a real bug, so an outage never looks like one.
 
 The 409 and 422 split is on purpose (A20): a client retries a 409 with another time, so a permanent problem must not look like one.
 
@@ -293,7 +294,7 @@ The full reasoning is in [ADR 003](adr/003-stack.md). In short:
 
 ## 7. Observability
 
-**Logs.** Structured JSON through pino. The request id comes from the `X-Request-Id` header (generated if missing), goes on every log line and is echoed back in the response, so a client or support person can hand it over. Each booking attempt logs the dealership id, the service type id, the outcome (created, replayed, or the error `code`), the `reason` on a 503, the number of attempts the loop took, and the latency. Never customer names, emails or VINs, only ids.
+**Logs.** Structured JSON through pino. The request id comes from the `X-Request-Id` header (generated if missing), goes on every log line and is echoed back in the response, so a client or support person can hand it over. Each booking request logs one line with the dealership id, the service type id, the outcome (created, replayed, or the error `code`), the `reason` on a 503, the number of attempts the loop took, and the latency. Never customer names, emails or VINs, only ids.
 
 **Metrics** at `/metrics`:
 
@@ -329,8 +330,8 @@ On the database side, a Postgres exporter for connections, lock waits, deadlocks
 
 **Reliability.**
 
-- Timeouts on every booking transaction with `SET LOCAL`, so they still work behind PgBouncer in transaction mode: `lock_timeout` 2 s, `statement_timeout` 5 s and a 5 s budget for the whole loop, all from config. 2 s is far above the 150 ms worst wait above, so an ordinary wait never turns into a false 503.
-- Bounded retries: B + T + 2 attempts plus the budget, and 3 tries for errors that prove nothing, then an honest 503 with `Retry-After` instead of hanging.
+- Timeouts on every booking transaction with `SET LOCAL`, so they still work behind PgBouncer in transaction mode: `lock_timeout` 2 s, `statement_timeout` 5 s, a 2 s timeout to get a pool connection, and a 5 s loop budget (no new attempt after 5 s), all from config. 2 s is far above the 150 ms worst wait above, so an ordinary wait never turns into a false 503. One catch behind PgBouncer: the pool also sets the same timeouts as session defaults through the `options` startup parameter, and PgBouncer refuses that parameter unless `ignore_startup_parameters = options` is set. The other way is to put the defaults on the database role (`ALTER ROLE ... SET statement_timeout`). I haven't tested this against a real PgBouncer.
+- Bounded retries: B + T + 2 lost races plus the budget, and 3 retries for errors that prove nothing, then an honest 503 with `Retry-After` instead of hanging.
 - Postgres itself: a managed Postgres with a standby and point-in-time recovery backups. During a failover, in-flight bookings get a connection error, and the client retries with the same idempotency key. If the first try had committed, the retry gets the booking replayed, otherwise it books fresh.
 - Migrations run as a separate job before a rollout (Compose runs them on start, fine for one instance), expand then contract, so old and new instances can run side by side.
 - Graceful shutdown lets in-flight bookings finish and closes the pool before the process exits.
@@ -385,6 +386,9 @@ The brief is open on purpose, so I made 23 calls. Each has its reason in [ASSUMP
 - OpenTelemetry tracing
 - bay types (lift, alignment rig), mirroring the skill model
 - fairer technician assignment than "fewest skills, then lowest id"
+- fewer round trips per booking: the lookups before the loop are six to nine single-row queries one after another, and can be one query. Dealership hours and service types can be cached in process
+- a version on the stored idempotency request hash (`v1:...`) before the first new booking field is added, or old keys would answer 422 to their own retries
+- check a dealership's time zone when it's written (there's no admin write path yet, so today a typo is found by the first booking as a 500)
 - smaller ones: an "active" flag for bays and technicians, buffers between jobs, combined visits (several services in one visit) and multi-day jobs
 
 ## 12. How I used AI agents in the design phase
