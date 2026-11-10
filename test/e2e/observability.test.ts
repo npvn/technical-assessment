@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import type { INestApplication } from '@nestjs/common';
+import { sql } from 'kysely';
 import request, { type Response } from 'supertest';
 import { databaseUrl } from '../support/database-url.js';
 import { insertCustomerWithVehicle } from '../support/fixtures.js';
@@ -430,5 +431,80 @@ describe('AC-36 request id and logs', () => {
         lostRaces: 0,
       }),
     ]);
+  });
+
+  it('AC-36 the request line has only the method, the path, the id and the status, no headers or query string', async () => {
+    // Free text a client chooses, which could hold anything. None of it may
+    // reach the log, so the serializers keep a short list instead of
+    // redacting a few headers.
+    const markers = {
+      idempotencyKey: 'secret-key-marker-123',
+      userAgent: 'agent-marker-456',
+      query: 'query-marker-789',
+    };
+    const car = await insertCustomerWithVehicle(testDb.db);
+    const reqId = `ac36-${randomUUID()}`;
+    logs.clear();
+
+    await request(app.getHttpServer())
+      .post(`/appointments?note=${markers.query}`)
+      .set('X-Request-Id', reqId)
+      .set('Idempotency-Key', markers.idempotencyKey)
+      .set('User-Agent', markers.userAgent)
+      .send(body(place, car, '2027-03-09T16:00:00Z'))
+      .expect(201);
+
+    const requestLine = await waitForLine(logs, isRequestLine(201));
+    expect(requestLine?.req).toEqual({ id: reqId, method: 'POST', path: '/appointments' });
+    expect(requestLine?.res).toEqual({ statusCode: 201 });
+
+    const raw = logs.raw();
+    expect(raw).not.toContain(markers.idempotencyKey);
+    expect(raw).not.toContain(markers.userAgent);
+    expect(raw).not.toContain(markers.query);
+  });
+});
+
+describe('AC-34 a database blip does not kill the process', () => {
+  let app: INestApplication;
+  // The app's connections carry this name, so the test can end exactly
+  // those and not the ones its own pool holds.
+  const applicationName = `blip_${randomBytes(4).toString('hex')}`;
+
+  beforeAll(async () => {
+    const url = new URL(testDb.url);
+    url.searchParams.set('application_name', applicationName);
+    app = await boot({ databaseUrl: url.toString() });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('AC-34 after Postgres ends the idle connections, live stays 200 and ready is 200 again', async () => {
+    const http = () => request(app.getHttpServer());
+    // Leaves one idle connection in the app's pool
+    expect((await http().get('/health/ready')).status).toBe(200);
+
+    // What a database restart or failover does to an idle connection
+    const ended = await sql<{ ended: boolean }>`
+      SELECT pg_terminate_backend(pid) AS ended
+      FROM pg_stat_activity
+      WHERE application_name = ${applicationName}
+    `.execute(testDb.db);
+    expect(ended.rows.length).toBeGreaterThan(0);
+    // Gives pg time to see the dropped socket and emit its error
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect((await http().get('/health/live')).status).toBe(200);
+
+    // The pool drops the dead connection and opens a new one, so ready
+    // answers 200 again without a restart
+    let ready = 0;
+    for (let i = 0; i < 20 && ready !== 200; i++) {
+      ready = (await http().get('/health/ready')).status;
+      if (ready !== 200) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(ready).toBe(200);
   });
 });

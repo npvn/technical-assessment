@@ -29,10 +29,27 @@ class LogDestinationModule {}
 // Probes and scrapes come every few seconds and would bury the real traffic.
 const QUIET_PATHS = ['/health/', '/metrics'];
 
+// What the request line says about the request and the response. A short
+// list of fields to keep, not a list of headers to hide. Headers, the query
+// string and the client address are all free text from outside (an
+// Idempotency-Key or a User-Agent can hold anything), so none of it is
+// logged. Bodies are never logged either.
+interface SerializedRequest {
+  id: unknown;
+  method: string;
+  url: string;
+}
+
+function requestFields(req: SerializedRequest) {
+  return { id: req.id, method: req.method, path: req.url.split('?')[0] };
+}
+
+function responseFields(res: { statusCode: number }) {
+  return { statusCode: res.statusCode };
+}
+
 // pino through nestjs-pino. Every line logged during a request carries its
 // reqId, the request line comes from pino-http when the response finishes.
-// Request and response bodies are never logged, and the headers that can
-// carry secrets are redacted.
 export const LoggingModule = LoggerModule.forRootAsync({
   imports: [LogDestinationModule, ConfigModule],
   inject: [LOG_CONFIG, LOG_DESTINATION],
@@ -43,10 +60,7 @@ export const LoggingModule = LoggerModule.forRootAsync({
         genReqId: requestIdFor,
         // reqId at the top of every line, not only inside req
         quietReqLogger: true,
-        redact: {
-          paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
-          censor: '[redacted]',
-        },
+        serializers: { req: requestFields, res: responseFields },
         autoLogging: {
           ignore: (req: IncomingMessage) =>
             QUIET_PATHS.some((path) => (req.url ?? '').startsWith(path)),

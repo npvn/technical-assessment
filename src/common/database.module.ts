@@ -1,4 +1,4 @@
-import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { Global, Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 import type { Kysely } from 'kysely';
 import type pg from 'pg';
 import { createDatabaseWithPool } from '../db/database.js';
@@ -21,13 +21,16 @@ const DATABASE_WITH_POOL = Symbol('DATABASE_WITH_POOL');
     {
       provide: DATABASE_WITH_POOL,
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) =>
-        createDatabaseWithPool({
+      useFactory: (config: AppConfig) => {
+        const both = createDatabaseWithPool({
           url: config.databaseUrl,
           poolSize: config.dbPoolSize,
           statementTimeoutMs: config.booking.statementTimeoutMs,
           lockTimeoutMs: config.booking.lockTimeoutMs,
-        }),
+        });
+        keepRunningOnIdleErrors(both.pool);
+        return both;
+      },
     },
     {
       provide: DATABASE,
@@ -49,4 +52,20 @@ export class DatabaseModule implements OnApplicationShutdown {
   async onApplicationShutdown(): Promise<void> {
     await this.db.destroy();
   }
+}
+
+// When Postgres ends a connection that is sitting idle in the pool (a
+// restart, a failover, pg_terminate_backend), pg emits 'error' on the pool.
+// With no listener Node treats that as an uncaught error and the whole
+// process dies, and every instance would go down with one database blip.
+// The pool has already thrown the dead connection away and opens a new one
+// on the next query, so logging it is all there is to do. Only the SQLSTATE
+// or system code goes in the log, the message text can carry connection
+// details.
+function keepRunningOnIdleErrors(pool: pg.Pool): void {
+  const logger = new Logger('DatabasePool');
+  pool.on('error', (error: Error & { code?: unknown }) => {
+    const code = typeof error.code === 'string' ? error.code : 'unknown';
+    logger.warn(`idle database connection failed, code ${code}`);
+  });
 }
