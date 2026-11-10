@@ -274,7 +274,11 @@ function indexNames(plan: unknown): string[] {
 // Any of the three indexes counts. All three carry the same range expression
 // and WHERE, and when I tried the planned SQL by hand the bay query picked
 // appointments_no_vehicle_overlap for a bitmap scan on the range alone. That
-// still proves the read matches the constraint, which is the point.
+// still proves the read matches the constraint, which is the point. A read
+// written with a different range expression or without the status filter
+// can't use any of the three. Please don't tighten this to one named index.
+// Which of the three the planner picks depends on its cost guesses, so that
+// test would be flaky.
 //
 // The plan comes from the query builders findFreeResources is meant to run,
 // not a copy, and each test also checks the builder returns the same ids as
