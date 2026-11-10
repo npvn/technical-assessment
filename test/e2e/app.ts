@@ -2,9 +2,13 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'supertest';
 import { AppModule } from '../../src/app.module.js';
-import type { BookingStore } from '../../src/appointments/booking.store.js';
-import { BOOKING_STORE, CLOCK } from '../../src/appointments/booking.tokens.js';
+import type { Kysely } from 'kysely';
+import type { BookingConfig } from '../../src/appointments/booking.config.js';
+import { PostgresBookingStore, type BookingStore } from '../../src/appointments/booking.store.js';
+import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from '../../src/appointments/booking.tokens.js';
+import { DATABASE } from '../../src/common/database.module.js';
 import { configureApp } from '../../src/common/configure-app.js';
+import type { Database } from '../../src/db/types.js';
 import type { Clock } from '../../src/scheduling/index.js';
 
 // Helpers for the e2e tests: the real AppModule, configured the same way as
@@ -30,19 +34,33 @@ export interface BootOptions {
   // Swaps the Postgres store, for the cases a real database can't produce
   // on demand (a 503, an unexpected error).
   store?: BookingStore;
+  // Wraps the real Postgres store instead of replacing it, so the wrapper
+  // runs on the app's own pool and config. The HTTP race test puts its
+  // barrier in here. Ignored when store is set.
+  wrapStore?: (real: BookingStore) => BookingStore;
+  // DB_POOL_SIZE for the app. 5 is plenty for one request at a time, a race
+  // of N parallel requests needs more than N.
+  poolSize?: number;
 }
 
 // The config comes from the environment like in production, so it has to be
 // set before the module is compiled.
 export async function bootApp(options: BootOptions): Promise<INestApplication> {
   process.env.DATABASE_URL = options.databaseUrl;
-  process.env.DB_POOL_SIZE = '5';
+  process.env.DB_POOL_SIZE = String(options.poolSize ?? 5);
 
   let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(CLOCK)
     .useValue(options.clock);
   if (options.store) {
     builder = builder.overrideProvider(BOOKING_STORE).useValue(options.store);
+  } else if (options.wrapStore) {
+    const wrap = options.wrapStore;
+    builder = builder.overrideProvider(BOOKING_STORE).useFactory({
+      inject: [DATABASE, BOOKING_CONFIG],
+      factory: (db: Kysely<Database>, config: BookingConfig) =>
+        wrap(new PostgresBookingStore(db, config)),
+    });
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
