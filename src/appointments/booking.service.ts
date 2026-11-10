@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   HORIZON_DAYS,
   STEP_MINUTES,
@@ -7,13 +7,14 @@ import {
   type TimeRange,
 } from '../scheduling/index.js';
 import type { BookingConfig } from './booking.config.js';
+import { noopBookingObserver, type BookingObserver } from './booking.observer.js';
 import type {
   BookingAttempt,
   BookingLookup,
   BookingStore,
   KeyedAppointment,
 } from './booking.store.js';
-import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
+import { BOOKING_CONFIG, BOOKING_OBSERVER, BOOKING_STORE, CLOCK } from './booking.tokens.js';
 import type {
   BookingErrorCode,
   BookingRequest,
@@ -72,6 +73,10 @@ export class BookingService {
     @Inject(BOOKING_STORE) private readonly store: BookingStore,
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(BOOKING_CONFIG) private readonly config: BookingConfig,
+    // Not called yet. Step 7 red stub, the green half wires it in.
+    @Optional()
+    @Inject(BOOKING_OBSERVER)
+    private readonly observer: BookingObserver = noopBookingObserver,
   ) {}
 
   async book(request: BookingRequest): Promise<BookingResult> {
