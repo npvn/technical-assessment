@@ -67,7 +67,7 @@ export class AppointmentsController {
   @ApiResponse(
     problemResponse(
       503,
-      'BOOKING_CONTENDED. The server could not decide in time, retry after Retry-After seconds',
+      'BOOKING_CONTENDED, the server could not decide in time. SERVICE_UNAVAILABLE, the database is not answering. Both: retry after Retry-After seconds',
     ),
   )
   async create(
@@ -86,7 +86,7 @@ export class AppointmentsController {
     const startTime = parseInstant(dto.startTime);
     if (!startTime) throw new Error('startTime passed validation but did not parse');
 
-    const result = await this.booking.book({
+    const { result, timeZone } = await this.booking.bookWithTimeZone({
       dealershipId: dto.dealershipId,
       serviceTypeId: dto.serviceTypeId,
       customerId: dto.customerId,
@@ -102,13 +102,15 @@ export class AppointmentsController {
       throw new Error(`a ${result.kind} result mapped to a success`);
     }
 
-    // Read back through the same reader GET uses, so both bodies match
-    const view = await this.reader.findById(result.appointment.id);
-    if (!view)
-      throw new Error(`appointment ${result.appointment.id} not found right after booking`);
-
+    // The body comes from the row the booking stored (or found for a
+    // replay) and the zone from the lookup, through the same mapper GET
+    // uses, so both bodies match. No second read after the commit, a failed
+    // read there would turn a booking that exists into a 500.
+    if (timeZone === null) {
+      throw new Error(`appointment ${result.appointment.id} came back without a time zone`);
+    }
     res.status(answer.status).set(answer.headers);
-    return toAppointmentResponse(view);
+    return toAppointmentResponse({ ...result.appointment, timeZone });
   }
 
   @Get(':id')

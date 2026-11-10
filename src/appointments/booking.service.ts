@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { isDatabaseUnavailable } from '../common/database-unavailable.js';
 import {
   HORIZON_DAYS,
   STEP_MINUTES,
@@ -76,6 +77,15 @@ type AttemptOutcome = { kind: 'answer'; result: BookingResult } | { kind: 'lost'
 const rejected = (code: BookingErrorCode): BookingResult => ({ kind: 'rejected', code });
 const contended = (reason: ContendedReason): BookingResult => ({ kind: 'contended', reason });
 
+// What bookWithTimeZone answers: the result, and the dealership's time zone
+// from the lookup (null when the dealership wasn't found). The controller
+// builds the 201 body from these, so it doesn't have to read the new row back
+// after the commit.
+export interface BookingAnswer {
+  result: BookingResult;
+  timeZone: string | null;
+}
+
 // Books one appointment: the lookups, the 404s and 422s, then the loop from
 // ADR 001. Nest injects the dependencies in the app, a unit test just calls
 // the constructor with a fake store and a test clock.
@@ -94,24 +104,35 @@ export class BookingService {
 
   private readonly logger = new Logger(BookingService.name);
 
-  // Answers the request, then tells the observer how it went. A throw is
-  // recorded as INTERNAL_ERROR and thrown on unchanged, so the 500 still
-  // shows up in the booking metrics.
   async book(request: BookingRequest): Promise<BookingResult> {
+    return (await this.bookWithTimeZone(request)).result;
+  }
+
+  // Answers the request, then tells the observer how it went. A throw is
+  // recorded and thrown on unchanged, so it still shows up in the booking
+  // metrics. The database not being there is SERVICE_UNAVAILABLE (the filter
+  // makes it a 503), anything else is INTERNAL_ERROR (a 500).
+  async bookWithTimeZone(request: BookingRequest): Promise<BookingAnswer> {
     const startedAt = this.clock.now().getTime();
     const counts: LoopCounts = { attempts: 0, lostRaces: 0 };
+    const seen: { timeZone: string | null } = { timeZone: null };
     let result: BookingResult;
     try {
-      result = await this.decide(request, counts);
+      result = await this.decide(request, counts, seen);
     } catch (error) {
-      this.observe(request, { outcome: 'INTERNAL_ERROR' }, counts, startedAt);
+      const outcome = isDatabaseUnavailable(error) ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_ERROR';
+      this.observe(request, { outcome }, counts, startedAt);
       throw error;
     }
     this.observe(request, outcomeOf(result), counts, startedAt);
-    return result;
+    return { result, timeZone: seen.timeZone };
   }
 
-  private async decide(request: BookingRequest, counts: LoopCounts): Promise<BookingResult> {
+  private async decide(
+    request: BookingRequest,
+    counts: LoopCounts,
+    seen: { timeZone: string | null },
+  ): Promise<BookingResult> {
     const idempotency: Idempotency | undefined = request.idempotencyKey
       ? {
           customerId: request.customerId,
@@ -125,6 +146,7 @@ export class BookingService {
     // after its start time has passed, or after the preferred technician
     // stopped being eligible (ADR 001 decision 3, AC-42).
     const lookup = await this.store.lookup(request);
+    seen.timeZone = lookup.dealership?.timeZone ?? null;
     if (idempotency && lookup.keyed) return answerForKey(lookup.keyed, idempotency);
 
     const checked = checkLookup(request, lookup);

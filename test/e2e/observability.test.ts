@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer } from 'node:net';
 import { Writable } from 'node:stream';
 import type { INestApplication } from '@nestjs/common';
 import { sql } from 'kysely';
@@ -462,6 +463,63 @@ describe('AC-36 request id and logs', () => {
     expect(raw).not.toContain(markers.idempotencyKey);
     expect(raw).not.toContain(markers.userAgent);
     expect(raw).not.toContain(markers.query);
+  });
+});
+
+// A port on this machine where nothing listens, so every connection the
+// app tries is refused straight away. That's what a stopped or restarting
+// Postgres looks like to the app.
+async function closedPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return address.port;
+}
+
+describe('the database is gone', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const url = new URL(testDb.url);
+    url.hostname = '127.0.0.1';
+    url.port = String(await closedPort());
+    app = await boot({ databaseUrl: url.toString() });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  const http = () => request(app.getHttpServer());
+
+  it('POST /appointments is 503 SERVICE_UNAVAILABLE with Retry-After, and counts as service_unavailable', async () => {
+    const res = await http().post('/appointments').send({
+      dealershipId: randomUUID(),
+      serviceTypeId: randomUUID(),
+      customerId: randomUUID(),
+      vehicleId: randomUUID(),
+      startTime: '2027-03-09T09:00:00Z',
+    });
+
+    expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+    expect(res.headers['retry-after']).toBe('1');
+    expect(res.text).not.toContain('ECONNREFUSED');
+
+    const metrics = (await http().get('/metrics')).text;
+    expect(
+      metricLine(metrics, 'booking_requests_total{outcome="service_unavailable"} 1'),
+    ).toBeDefined();
+  });
+
+  it('GET /availability is 503 SERVICE_UNAVAILABLE with Retry-After', async () => {
+    const res = await http()
+      .get('/availability')
+      .query({ dealershipId: randomUUID(), serviceTypeId: randomUUID(), date: '2027-03-09' });
+
+    expectProblem(res, 503, 'SERVICE_UNAVAILABLE');
+    expect(res.headers['retry-after']).toBe('1');
   });
 });
 

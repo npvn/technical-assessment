@@ -381,6 +381,45 @@ describe('when something goes wrong', () => {
     ]);
   });
 
+  // The database not being there is not a bug, so it gets its own outcome
+  // and the metrics can tell an outage from a 500.
+  it('the database going away during the lookups is recorded as SERVICE_UNAVAILABLE, then thrown on unchanged', async () => {
+    const gone = pgError('57P01');
+    const { store, observer, book } = setup({ read: () => freeRead(), insert: books });
+    store.lookup = () => Promise.reject(gone);
+
+    await expect(book()).rejects.toBe(gone);
+
+    expect(observer.records).toEqual([
+      {
+        dealershipId: 'north',
+        serviceTypeId: 'oil',
+        outcome: 'SERVICE_UNAVAILABLE',
+        attempts: 0,
+        lostRaces: 0,
+        durationMs: 0,
+      },
+    ]);
+  });
+
+  it('a refused connection inside an attempt is SERVICE_UNAVAILABLE too', async () => {
+    const refused = Object.assign(new Error('connect ECONNREFUSED 10.0.0.7:5432'), {
+      code: 'ECONNREFUSED',
+    });
+    const { observer, book } = setup({
+      read: () => {
+        throw refused;
+      },
+      insert: books,
+    });
+
+    await expect(book()).rejects.toBe(refused);
+
+    expect(observer.records).toEqual([
+      expect.objectContaining({ outcome: 'SERVICE_UNAVAILABLE', attempts: 1, lostRaces: 0 }),
+    ]);
+  });
+
   it('an observer that throws does not change the answer', async () => {
     // The booking is already committed by the time the observer runs. A
     // broken metric must not turn it into a 500 the client would retry.

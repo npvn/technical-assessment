@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import type { Response } from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import type { Kysely } from 'kysely';
+import { AppointmentReader } from '../../src/appointments/appointment.reader.js';
 import type { BookingConfig } from '../../src/appointments/booking.config.js';
 import { PostgresBookingStore, type BookingStore } from '../../src/appointments/booking.store.js';
 import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from '../../src/appointments/booking.tokens.js';
@@ -43,6 +44,9 @@ export interface BootOptions {
   // runs on the app's own pool and config. The HTTP race test puts its
   // barrier in here. Ignored when store is set.
   wrapStore?: (real: BookingStore) => BookingStore;
+  // Swaps the reader behind GET /appointments/:id, for a test that needs
+  // the read to fail.
+  reader?: Pick<AppointmentReader, 'findById'>;
   // DB_POOL_SIZE for the app. 5 is plenty for one request at a time, a race
   // of N parallel requests needs more than N.
   poolSize?: number;
@@ -77,6 +81,9 @@ export async function bootApp(options: BootOptions): Promise<INestApplication> {
       factory: (db: Kysely<Database>, config: BookingConfig) =>
         wrap(new PostgresBookingStore(db, config)),
     });
+  }
+  if (options.reader) {
+    builder = builder.overrideProvider(AppointmentReader).useValue(options.reader);
   }
   if (options.logs) {
     builder = builder.overrideProvider(LOG_DESTINATION).useValue(options.logs);

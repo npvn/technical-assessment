@@ -3,8 +3,9 @@ import type { Database } from '../db/types.js';
 import type { AppointmentView } from './http-mapping.js';
 
 // Reads one appointment by id, with its dealership's time zone for the local
-// times. GET /appointments/:id uses it, and so does POST after a booking, so
-// the two bodies come from the same code and can't drift apart.
+// times, for GET /appointments/:id. POST builds its body from the booking
+// itself, and both go through toAppointmentResponse, so the two bodies come
+// from the same code and can't drift apart.
 export class AppointmentReader {
   constructor(private readonly db: Kysely<Database>) {}
 

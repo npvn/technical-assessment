@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsOptional, IsUUID } from 'class-validator';
 import type { AppointmentResponse } from './http-mapping.js';
 import { IsInstant } from './is-instant.decorator.js';
@@ -6,21 +7,34 @@ import { IsInstant } from './is-instant.decorator.js';
 // The same classes validate the request and describe it in the OpenAPI spec,
 // so the two can't drift apart (ADR 003).
 
+// A UUID is the same id in upper or lower case, and Postgres always hands it
+// back in lower case. So every id is lower cased here, once, and the service,
+// the request hash and the response only ever see that one form. Anything
+// that isn't a string is left alone for @IsUUID to refuse.
+const LowerCase = () =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.toLowerCase() : value,
+  );
+
 export class CreateAppointmentDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('all')
+  @LowerCase()
   customerId: string;
 
   @ApiProperty({ format: 'uuid' })
   @IsUUID('all')
+  @LowerCase()
   vehicleId: string;
 
   @ApiProperty({ format: 'uuid' })
   @IsUUID('all')
+  @LowerCase()
   dealershipId: string;
 
   @ApiProperty({ format: 'uuid' })
   @IsUUID('all')
+  @LowerCase()
   serviceTypeId: string;
 
   @ApiProperty({
@@ -38,6 +52,7 @@ export class CreateAppointmentDto {
   })
   @IsOptional()
   @IsUUID('all')
+  @LowerCase()
   preferredTechnicianId?: string | null;
 }
 

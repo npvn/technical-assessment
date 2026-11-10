@@ -7,6 +7,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { errorCode, isDatabaseUnavailable } from './database-unavailable.js';
 import { ProblemException, validationProblem, type Problem } from './problem.js';
 
 // The one place errors leave the API, always as application/problem+json
@@ -57,8 +58,24 @@ export class ProblemFilter implements ExceptionFilter {
       };
     }
 
-    // A bug or an outage. The real error goes to the log, the client gets
-    // nothing that could leak internals.
+    // The database is down, restarting or too slow right now. That's "try
+    // again shortly", not a bug. Only the code goes in the log, the message
+    // can carry the host and port.
+    if (isDatabaseUnavailable(exception)) {
+      this.logger.warn(`database unavailable, code ${errorCode(exception)}`);
+      return {
+        problem: {
+          status: 503,
+          code: 'SERVICE_UNAVAILABLE',
+          title: 'Service unavailable',
+          detail: 'The service cannot answer right now. Try again shortly.',
+        },
+        headers: { 'Retry-After': '1' },
+      };
+    }
+
+    // A bug or anything else unexpected. The real error goes to the log, the
+    // client gets nothing that could leak internals.
     this.logger.error(
       exception instanceof Error ? (exception.stack ?? exception.message) : String(exception),
     );

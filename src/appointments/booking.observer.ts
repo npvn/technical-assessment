@@ -4,11 +4,17 @@ import type { BookingErrorCode, ContendedReason } from './booking.types.js';
 // calls record once per booking request, and the metrics and the booking log
 // line both hang off it. Only ids go in here, never a name, email or VIN.
 
-// created, replayed, or the error code the client gets. A 503 is
-// BOOKING_CONTENDED, the same code the API answers with, and INTERNAL_ERROR
-// is a bug or an outage that came out of the service as a throw.
+// created, replayed, or the error code the client gets. A 503 from the loop
+// is BOOKING_CONTENDED, the same code the API answers with. A throw that came
+// out of the service is SERVICE_UNAVAILABLE when the database wasn't there
+// (see isDatabaseUnavailable), and INTERNAL_ERROR for anything else.
 export type BookingOutcome =
-  'created' | 'replayed' | BookingErrorCode | 'BOOKING_CONTENDED' | 'INTERNAL_ERROR';
+  | 'created'
+  | 'replayed'
+  | BookingErrorCode
+  | 'BOOKING_CONTENDED'
+  | 'SERVICE_UNAVAILABLE'
+  | 'INTERNAL_ERROR';
 
 export interface BookingRecord {
   dealershipId: string;

@@ -296,6 +296,36 @@ describe('POST /appointments', () => {
         .send(body(place, car, '2027-03-09T09:00:00Z', { customerId: someoneElse.customerId }));
       expectProblem(res, 422, 'VEHICLE_NOT_OWNED_BY_CUSTOMER');
     });
+
+    // A UUID is the same id in any case (RFC 4122), and Postgres finds the
+    // rows either way. It always hands them back in lower case though, so an
+    // id compared as sent would call the customer's own car someone else's.
+    it('AC-18 every id in upper case is still the customer own car: 201, ids in lower case', async () => {
+      const { place, car } = await north();
+      const upper = {
+        dealershipId: place.id.toUpperCase(),
+        serviceTypeId: types.oil.toUpperCase(),
+        customerId: car.customerId.toUpperCase(),
+        vehicleId: car.vehicleId.toUpperCase(),
+        preferredTechnicianId: place.technicians[0]?.toUpperCase(),
+      };
+
+      const res = await http()
+        .post('/appointments')
+        .send(body(place, car, '2027-03-09T09:00:00Z', upper));
+
+      expect({ status: res.status, code: res.body?.code }).toEqual({
+        status: 201,
+        code: undefined,
+      });
+      expect(res.body).toMatchObject({
+        dealershipId: place.id,
+        serviceTypeId: types.oil,
+        customerId: car.customerId,
+        vehicleId: car.vehicleId,
+        technicianId: place.technicians[0],
+      });
+    });
   });
 
   describe('AC-20 a bad body is 400 VALIDATION_FAILED naming the field', () => {
@@ -556,5 +586,69 @@ describe('with a swapped store', () => {
     expect(res.text).not.toContain('kaboom');
     expect(res.text).not.toContain('hunter2');
     expect(res.text).not.toContain('10.0.0.7');
+  });
+});
+
+// POST used to read the new appointment back after the commit. If that read
+// failed, the client got a 500 for a booking that exists, and its retry
+// without a key got a 409 for its own car. The 201 body has to come from
+// what the booking already knows, so here every read by id fails.
+describe('with a reader that fails', () => {
+  let failing: INestApplication;
+
+  beforeAll(async () => {
+    failing = await bootApp({
+      databaseUrl: testDb.url,
+      clock,
+      reader: { findById: () => Promise.reject(new Error('read after commit failed')) },
+    });
+  });
+
+  afterAll(async () => {
+    await failing?.close();
+  });
+
+  it('a new booking is still 201 with the full body', async () => {
+    const { place, car } = await north();
+
+    const res = await request(failing.getHttpServer())
+      .post('/appointments')
+      .send(body(place, car, '2027-03-29T08:00:00+01:00'));
+
+    expect({ status: res.status, code: res.body?.code }).toEqual({ status: 201, code: undefined });
+    expect(res.body).toEqual({
+      id: expect.stringMatching(UUID),
+      status: 'confirmed',
+      customerId: car.customerId,
+      vehicleId: car.vehicleId,
+      dealershipId: place.id,
+      serviceTypeId: types.oil,
+      serviceBayId: place.bays[0],
+      technicianId: place.technicians[0],
+      startsAt: '2027-03-29T07:00:00Z',
+      endsAt: '2027-03-29T08:00:00Z',
+      startsAtLocal: '2027-03-29T08:00:00+01:00',
+      endsAtLocal: '2027-03-29T09:00:00+01:00',
+      timeZone: 'Europe/London',
+      createdAt: expect.stringMatching(UTC_SECONDS),
+    });
+  });
+
+  it('a replay is still 201 with the same body and Idempotent-Replayed: true', async () => {
+    const { place, car } = await north();
+    const key = `reader-fails-${randomUUID()}`;
+    const send = () =>
+      request(failing.getHttpServer())
+        .post('/appointments')
+        .set('Idempotency-Key', key)
+        .send(body(place, car, '2027-03-09T09:00:00Z'));
+
+    const first = await send();
+    const again = await send();
+
+    expect([first.status, again.status]).toEqual([201, 201]);
+    expect(again.headers['idempotent-replayed']).toBe('true');
+    expect(again.body).toEqual(first.body);
+    expect(again.body.timeZone).toBe('Europe/London');
   });
 });
