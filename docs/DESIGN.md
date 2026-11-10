@@ -378,7 +378,7 @@ The brief is open on purpose, so I made 23 calls. Each has its reason in [ASSUMP
 
 - technician shifts, holidays and absences, and dealership closure days (the biggest gap: today a technician counts as available whenever the dealership is open)
 - auth per dealership (OAuth2 or JWT), with `customerId` taken from the token
-- cancel and reschedule endpoints (the constraints already ignore cancelled rows, so no migration)
+- cancel and reschedule endpoints (the constraints already ignore cancelled rows, so no migration). With cancel, a replay of a cancelled booking needs its own answer, today it would come back as a 201 with status cancelled
 - staff blocks (a bay down for maintenance, a walk-in, a phone booking). An exclusion constraint covers one table, so a block has to live in `appointments` (say a `kind` column), or the "database refuses overlaps" story breaks
 - notifications through an outbox table written in the booking transaction
 - an audit trail of who booked, changed or cancelled what
