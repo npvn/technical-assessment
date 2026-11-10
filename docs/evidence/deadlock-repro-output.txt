@@ -1,0 +1,11 @@
+Run 2026-11-10, postgres:16-alpine on a laptop with Docker.
+
+== plain INSERT, 16 clients, 10s
+latency average = 32070.940 ms (including failures)
+number of failed transactions: 11 (91.667%)
+number of transactions actually processed: 1
+== ON CONFLICT DO NOTHING, 16 clients, 10s
+latency average = 18.106 ms
+number of failed transactions: 0 (0.000%)
+number of transactions actually processed: 8819
+deadlock lines in the server log: 26

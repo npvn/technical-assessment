@@ -55,7 +55,7 @@ I had a Fable agent compare the options and run the claims that matter against P
 
 ## Trade-offs I accept
 
-- Under a burst for the exact same slot, requests walk down the list of bays and technicians (the agent measured 4.5 attempts on average with 32 clients all asking for one slot, 10 at most). That's because the pick is deterministic (A16). I'd rather keep the pick easy to reason about and test. Spreading requests across bays is a tuning step if the metric says so.
+- Under a burst for the exact same slot, requests walk down the list of bays and technicians (the agent measured 4.5 attempts on average with 32 clients all asking for one slot, 10 at most, [concurrency-experiments.md](../evidence/concurrency-experiments.md)). That's because the pick is deterministic (A16). I'd rather keep the pick easy to reason about and test. Spreading requests across bays is a tuning step if the metric says so.
 - `ON CONFLICT DO NOTHING` doesn't say which constraint got in the way, and with no conflict target it also swallows a clash on the idempotency key. The next attempt's read works it out, and it needs that read anyway.
 - Exclusion constraints aren't supported on partitioned tables in Postgres 16. I checked Postgres 17 too: it allows them only when the partition key is part of the constraint with equality. The vehicle constraint deliberately has no dealership in it (a car can't be in two places), so partitioning by dealership is off the table on any version without giving up that guarantee. At the volume in A23 (my estimate) one table is fine for years, and old rows can be archived out instead.
 - `btree_gist` has to be available. It ships with Postgres, it's a trusted extension, and the managed Postgres services I know of offer it.
