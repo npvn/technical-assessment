@@ -115,6 +115,12 @@ const BOOKING_ERRORS: Record<BookingErrorCode, ErrorEntry> = {
     title: 'Slot unavailable',
     detail: 'No bay and qualified technician are free for the whole service at this time.',
   },
+  // Step 8 red stub, the real row comes with green.
+  IDEMPOTENCY_KEY_REUSED: {
+    status: 500,
+    title: 'not implemented',
+    detail: 'not implemented',
+  },
 };
 
 // The reason stays out of it on purpose. The client does the same thing

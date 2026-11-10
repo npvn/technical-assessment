@@ -2,7 +2,7 @@ import type { AppointmentStatus } from '../db/types.js';
 
 // What the booking service gets once the HTTP layer has validated the body.
 // startTime is already an exact instant (the request always carries an
-// offset, ADR 002). The idempotency key joins this in step 8.
+// offset, ADR 002).
 export interface BookingRequest {
   dealershipId: string;
   serviceTypeId: string;
@@ -10,6 +10,9 @@ export interface BookingRequest {
   vehicleId: string;
   startTime: Date;
   preferredTechnicianId?: string | null;
+  // The Idempotency-Key header, already checked by the HTTP layer. Missing
+  // and null both mean the request has no key (A15).
+  idempotencyKey?: string | null;
 }
 
 // A stored appointment, in the service's own words (camelCase, Dates).
@@ -29,6 +32,8 @@ export interface Appointment {
 
 // The error codes the service can answer with, in the SPEC "Order of checks".
 // The HTTP layer (step 5) maps them to 404, 422 and 409.
+// IDEMPOTENCY_KEY_REUSED comes first of all of them when it applies (step 2
+// of the order), it sits at the end here only because it came in with step 8.
 export type BookingErrorCode =
   | 'DEALERSHIP_NOT_FOUND'
   | 'SERVICE_TYPE_NOT_FOUND'
@@ -44,7 +49,8 @@ export type BookingErrorCode =
   | 'OUTSIDE_OPENING_HOURS'
   | 'VEHICLE_ALREADY_BOOKED'
   | 'TECHNICIAN_UNAVAILABLE'
-  | 'SLOT_UNAVAILABLE';
+  | 'SLOT_UNAVAILABLE'
+  | 'IDEMPOTENCY_KEY_REUSED';
 
 // Why the loop gave up without an answer. All of them become 503
 // BOOKING_CONTENDED for the client, the reason is for logs and metrics.

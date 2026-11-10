@@ -28,6 +28,7 @@ const STATUS_BY_CODE: Record<BookingErrorCode, number> = {
   VEHICLE_ALREADY_BOOKED: 409,
   TECHNICIAN_UNAVAILABLE: 409,
   SLOT_UNAVAILABLE: 409,
+  IDEMPOTENCY_KEY_REUSED: 422,
 };
 
 // Same trick for the reasons. Every one of them is a 503 for the client.

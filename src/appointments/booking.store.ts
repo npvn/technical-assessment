@@ -10,6 +10,14 @@ import type { Appointment, BookingRequest } from './booking.types.js';
 // with a fake store (AC-25, AC-41) and the Postgres version below is the only
 // place that knows about transactions and SQL.
 
+// An appointment that was booked with an idempotency key, and the hash of
+// the request that booked it. The service compares the hash with its own to
+// tell a replay from a reused key.
+export interface KeyedAppointment {
+  appointment: Appointment;
+  requestHash: string;
+}
+
 // The facts behind the 404 and 422 checks, read once before the loop. The
 // store only reports what it found. The service decides which code wins, in
 // the SPEC "Order of checks".
@@ -25,6 +33,10 @@ export interface BookingLookup {
   // required skill, busy or not. False if the dealership or service type is
   // unknown.
   offersService: boolean;
+  // The appointment this customer already booked with the request's
+  // idempotency key. Missing or null when the request has no key or nothing
+  // was booked with it yet.
+  keyed?: KeyedAppointment | null;
 }
 
 // What one attempt asks the classifying read about.
@@ -34,6 +46,8 @@ export interface SlotQuery {
   skillCode: string;
   range: TimeRange;
   preferredTechnicianId: string | null;
+  // Set when the request has an idempotency key. Keys are per customer (A15).
+  idempotency?: { customerId: string; key: string } | null;
 }
 
 // What the classifying read found, as plain facts. The service turns them
@@ -46,6 +60,9 @@ export interface SlotRead {
   preferredTechnicianBusy: boolean;
   bayIds: string[];
   technicianIds: string[];
+  // The appointment already booked with the request's key, if any. Only
+  // looked for when the query has a key.
+  keyed?: KeyedAppointment | null;
 }
 
 export interface NewBooking {
@@ -56,6 +73,9 @@ export interface NewBooking {
   serviceBayId: string;
   technicianId: string;
   range: TimeRange;
+  // Stored on the row in the same insert, so the partial unique index on
+  // (customer_id, idempotency_key) lets only one of two twins in.
+  idempotency?: { key: string; requestHash: string } | null;
 }
 
 // One attempt's view of the database. Both calls run inside the attempt's
