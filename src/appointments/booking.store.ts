@@ -188,6 +188,12 @@ export class PostgresBookingStore implements BookingStore {
       offersService = Boolean(offer.has_bay) && Boolean(offer.has_technician);
     }
 
+    // The booking already made with this key, if any. The service checks
+    // this before anything else above (ADR 001 decision 3).
+    const keyed = request.idempotencyKey
+      ? await findKeyed(db, { customerId: request.customerId, key: request.idempotencyKey })
+      : null;
+
     return {
       dealership: dealershipRow
         ? {
@@ -211,6 +217,7 @@ export class PostgresBookingStore implements BookingStore {
       vehicle: vehicleRow ? { id: vehicleRow.id, customerId: vehicleRow.customer_id } : null,
       preferredTechnician,
       offersService,
+      keyed,
     };
   }
 
@@ -292,7 +299,17 @@ class PostgresBookingAttempt implements BookingAttempt {
       ])
       .executeTakeFirstOrThrow();
 
+    // The idempotency key goes last, as its own statement after the busy
+    // checks. At READ COMMITTED a later statement sees everything an earlier
+    // one saw and maybe more. So if a twin with our key committed in time
+    // for the vehicle check to see its booking, this one sees the twin's key
+    // too, and the service answers with a replay instead of a false
+    // VEHICLE_ALREADY_BOOKED (AC-30). Run first, it could miss a twin that
+    // commits in between.
+    const keyed = query.idempotency ? await findKeyed(trx, query.idempotency) : null;
+
     return {
+      keyed,
       vehicleBusy: Boolean(busy.vehicle_busy),
       preferredTechnicianBusy: Boolean(busy.technician_busy),
       bayIds: free.bayIds,
@@ -318,12 +335,32 @@ class PostgresBookingAttempt implements BookingAttempt {
         starts_at: booking.range.start,
         ends_at: booking.range.end,
         status: 'confirmed',
+        idempotency_key: booking.idempotency?.key ?? null,
+        request_hash: booking.idempotency?.requestHash ?? null,
       })
       .onConflict((oc) => oc.doNothing())
       .returningAll()
       .executeTakeFirst();
     return row ? toAppointment(row) : null;
   }
+}
+
+// The appointment booked with this customer's key. No status filter, on
+// purpose: the unique index has none either, so a cancelled booking still
+// owns its key. Filtering it out here would let the loop keep trying an
+// insert the index keeps refusing.
+async function findKeyed(
+  db: Kysely<Database>,
+  where: { customerId: string; key: string },
+): Promise<KeyedAppointment | null> {
+  const row = await db
+    .selectFrom('appointments')
+    .selectAll()
+    .where('customer_id', '=', where.customerId)
+    .where('idempotency_key', '=', where.key)
+    .executeTakeFirst();
+  if (!row?.request_hash) return null;
+  return { appointment: toAppointment(row), requestHash: row.request_hash };
 }
 
 function toAppointment(row: AppointmentRow): Appointment {

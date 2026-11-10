@@ -115,11 +115,13 @@ const BOOKING_ERRORS: Record<BookingErrorCode, ErrorEntry> = {
     title: 'Slot unavailable',
     detail: 'No bay and qualified technician are free for the whole service at this time.',
   },
-  // Step 8 red stub, the real row comes with green.
+  // 422 and not 409, trying again with the same key can never work. The
+  // client needs a new key for a different request.
   IDEMPOTENCY_KEY_REUSED: {
-    status: 500,
-    title: 'not implemented',
-    detail: 'not implemented',
+    status: 422,
+    title: 'Idempotency key reused',
+    detail:
+      'This Idempotency-Key was already used by this customer for a different request. Use a new key for a new request.',
   },
 };
 

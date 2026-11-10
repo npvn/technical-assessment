@@ -7,7 +7,12 @@ import {
   type TimeRange,
 } from '../scheduling/index.js';
 import type { BookingConfig } from './booking.config.js';
-import type { BookingAttempt, BookingLookup, BookingStore } from './booking.store.js';
+import type {
+  BookingAttempt,
+  BookingLookup,
+  BookingStore,
+  KeyedAppointment,
+} from './booking.store.js';
 import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
 import type {
   BookingErrorCode,
@@ -15,6 +20,7 @@ import type {
   BookingResult,
   ContendedReason,
 } from './booking.types.js';
+import { requestHash } from './idempotency.js';
 
 // Database errors that say nothing about free slots (ADR 001 decision 6).
 // Deadlock, serialization failure and lock timeout get retried, up to
@@ -34,6 +40,14 @@ interface LoopInput {
   skillCode: string;
   range: TimeRange;
   preferredTechnicianId: string | null;
+  // Only set when the request has an Idempotency-Key.
+  idempotency?: Idempotency;
+}
+
+interface Idempotency {
+  customerId: string;
+  key: string;
+  requestHash: string;
 }
 
 // Shared between attempts. The cap is taken from the very first read, even
@@ -61,11 +75,22 @@ export class BookingService {
   ) {}
 
   async book(request: BookingRequest): Promise<BookingResult> {
-    // Step 8 goes here: the idempotency key lookup. It has to come before
-    // every other check, so a replay still works after its start time has
-    // passed (ADR 001 decision 3).
+    const idempotency: Idempotency | undefined = request.idempotencyKey
+      ? {
+          customerId: request.customerId,
+          key: request.idempotencyKey,
+          requestHash: requestHash(request),
+        }
+      : undefined;
 
-    const checked = checkLookup(request, await this.store.lookup(request));
+    // The store looks the key up together with everything else, but the key
+    // is checked first, before every 404 and 422. So a replay still works
+    // after its start time has passed, or after the preferred technician
+    // stopped being eligible (ADR 001 decision 3, AC-42).
+    const lookup = await this.store.lookup(request);
+    if (idempotency && lookup.keyed) return answerForKey(lookup.keyed, idempotency);
+
+    const checked = checkLookup(request, lookup);
     if (!checked.ok) return rejected(checked.code);
     const { dealership, serviceType } = checked;
 
@@ -88,6 +113,7 @@ export class BookingService {
       skillCode: serviceType.requiredSkillCode,
       range: time.range,
       preferredTechnicianId: request.preferredTechnicianId ?? null,
+      ...(idempotency ? { idempotency } : {}),
     });
   }
 
@@ -138,9 +164,10 @@ export class BookingService {
 
   // One attempt, inside its transaction. The read answers in a fixed order
   // (ADR 001 decision 4), and the order matters:
-  // 1. (step 8) is the idempotency key already booked? A twin request with
-  //    the same key may have just committed. This has to come first, or a
-  //    replay would see "its own" vehicle as busy and get a 409.
+  // 1. is the idempotency key already booked? A twin request with the same
+  //    key may have committed since the check at the start. This has to
+  //    come first, or a replay would see "its own" vehicle as busy and get
+  //    a 409.
   // 2. is the vehicle booked at an overlapping time anywhere?
   // 3. is the preferred technician busy? No fallback to someone else (A5).
   // 4. is there no free bay, or no free qualified technician?
@@ -151,21 +178,24 @@ export class BookingService {
     input: LoopInput,
     state: LoopState,
   ): Promise<AttemptOutcome> {
-    // Step 8 goes here: look the idempotency key up again, before the
-    // vehicle check below. Careful, at READ COMMITTED a separate statement
-    // run before the read can miss a twin that commits in between, which
-    // gives exactly the 409 this order is there to prevent. The key check
-    // has to see data at least as new as the vehicle check (see readSlot in
-    // booking.store.ts).
-
-    const { request, range, preferredTechnicianId } = input;
+    // The key is looked up inside readSlot, after the vehicle check and not
+    // before it. At READ COMMITTED every statement has its own snapshot, so
+    // a key check run first could miss a twin that commits right after it,
+    // and then the vehicle check would see the twin's booking and give the
+    // 409 this order is there to prevent (see readSlot in booking.store.ts).
+    const { request, range, preferredTechnicianId, idempotency } = input;
     const read = await attempt.readSlot({
       dealershipId: request.dealershipId,
       vehicleId: request.vehicleId,
       skillCode: input.skillCode,
       range,
       preferredTechnicianId,
+      ...(idempotency
+        ? { idempotency: { customerId: idempotency.customerId, key: idempotency.key } }
+        : {}),
     });
+
+    if (idempotency && read.keyed) return answer(answerForKey(read.keyed, idempotency));
 
     // Every lost race proves a competitor committed a booking on that bay or
     // technician, so the next read won't offer it again. A request can lose
@@ -198,6 +228,12 @@ export class BookingService {
       serviceBayId: bay,
       technicianId: technician,
       range,
+      // Stored in the same insert, so the unique index on (customer_id,
+      // idempotency_key) lets only one of two twins in. The loser gets zero
+      // rows and its next read finds the winner's key.
+      ...(idempotency
+        ? { idempotency: { key: idempotency.key, requestHash: idempotency.requestHash } }
+        : {}),
     });
     return appointment ? answer({ kind: 'created', appointment }) : { kind: 'lost' };
   }
@@ -205,6 +241,14 @@ export class BookingService {
 
 function answer(result: BookingResult): AttemptOutcome {
   return { kind: 'answer', result };
+}
+
+// Somebody already booked with this customer's key. Same request: hand back
+// that booking. Different request: 422, never somebody else's booking.
+function answerForKey(found: KeyedAppointment, idempotency: Idempotency): BookingResult {
+  return found.requestHash === idempotency.requestHash
+    ? { kind: 'replayed', appointment: found.appointment }
+    : rejected('IDEMPOTENCY_KEY_REUSED');
 }
 
 type LookupCheck =

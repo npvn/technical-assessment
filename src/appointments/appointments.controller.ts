@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Res } from '@nestjs/common';
 import {
   ApiExtraModels,
   ApiOkResponse,
   ApiCreatedResponse,
+  ApiHeader,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -15,6 +16,7 @@ import { AppointmentReader } from './appointment.reader.js';
 import { AppointmentResponseDto, CreateAppointmentDto } from './appointment.dto.js';
 import { BookingService } from './booking.service.js';
 import { toAppointmentResponse, toHttpAnswer, type AppointmentResponse } from './http-mapping.js';
+import { parseIdempotencyKey } from './idempotency.js';
 
 @ApiTags('appointments')
 @ApiExtraModels(ProblemDto)
@@ -27,7 +29,22 @@ export class AppointmentsController {
 
   @Post()
   @HttpCode(201)
-  @ApiCreatedResponse({ type: AppointmentResponseDto, description: 'Booked' })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      '1 to 255 visible ASCII characters, per customer. The same key with the same request gives back the original booking with Idempotent-Replayed: true. The same key with a different request is 422 IDEMPOTENCY_KEY_REUSED.',
+  })
+  @ApiCreatedResponse({
+    type: AppointmentResponseDto,
+    description: 'Booked, or the replay of an earlier booking with the same Idempotency-Key',
+    headers: {
+      'Idempotent-Replayed': {
+        description: 'true when this is the earlier booking handed back for a retry',
+        schema: { type: 'string', enum: ['true'] },
+      },
+    },
+  })
   @ApiResponse(problemResponse(400, 'VALIDATION_FAILED'))
   @ApiResponse(
     problemResponse(
@@ -44,7 +61,7 @@ export class AppointmentsController {
   @ApiResponse(
     problemResponse(
       422,
-      'Can never work as asked: VEHICLE_NOT_OWNED_BY_CUSTOMER, TECHNICIAN_NOT_ELIGIBLE, SERVICE_NOT_OFFERED, START_NOT_ON_GRID, START_IN_PAST, BEYOND_BOOKING_HORIZON, OUTSIDE_OPENING_HOURS',
+      'Can never work as asked: VEHICLE_NOT_OWNED_BY_CUSTOMER, TECHNICIAN_NOT_ELIGIBLE, SERVICE_NOT_OFFERED, START_NOT_ON_GRID, START_IN_PAST, BEYOND_BOOKING_HORIZON, OUTSIDE_OPENING_HOURS, IDEMPOTENCY_KEY_REUSED',
     ),
   )
   @ApiResponse(
@@ -55,8 +72,16 @@ export class AppointmentsController {
   )
   async create(
     @Body() dto: CreateAppointmentDto,
+    @Headers('idempotency-key') rawKey: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AppointmentResponse> {
+    // The header is checked here, the body by the validation pipe before
+    // this method runs. Both are 400 VALIDATION_FAILED, step 1 of the order.
+    const idempotency = parseIdempotencyKey(rawKey);
+    if (!idempotency.ok) {
+      throw validationProblem([{ field: 'Idempotency-Key', message: idempotency.message }]);
+    }
+
     // The DTO already checked it parses, so null here would be a bug
     const startTime = parseInstant(dto.startTime);
     if (!startTime) throw new Error('startTime passed validation but did not parse');
@@ -68,6 +93,7 @@ export class AppointmentsController {
       vehicleId: dto.vehicleId,
       startTime,
       preferredTechnicianId: dto.preferredTechnicianId ?? null,
+      idempotencyKey: idempotency.key,
     });
 
     const answer = toHttpAnswer(result);
