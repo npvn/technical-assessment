@@ -22,7 +22,7 @@ This is a NestJS + PostgreSQL service that books a service bay and a qualified t
 8. **Pure scheduling rules live in `src/scheduling/` and do not import Nest, Kysely or pg.** Keep them easy to unit test.
 9. **SQL migrations are plain SQL and never edited after they are committed.** Add a new one instead.
 10. **Do not commit, stage, stash or clean in git.** The engineer reviews the diff and commits.
-11. **Never log customer names, emails or vehicle registrations.** Log ids.
+11. **Never log customer names, emails or VINs.** Log ids.
 
 ## Style
 

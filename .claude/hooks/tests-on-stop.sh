@@ -8,8 +8,12 @@ if echo "$input" | grep -q '"stop_hook_active": *true'; then
   exit 0
 fi
 cd "$CLAUDE_PROJECT_DIR" || exit 0
+event=$(echo "$input" | grep -o '"hook_event_name": *"[A-Za-z]*"' | sed 's/.*"\([A-Za-z]*\)"$/\1/')
 out=$(npm test --silent 2>&1)
-if [ $? -ne 0 ]; then
+status=$?
+# A local run log (gitignored), so it is easy to see that the hook really fires.
+echo "$(date '+%Y-%m-%d %H:%M:%S') ${event:-unknown} exit=$status" >> .claude/hooks/runs.log
+if [ $status -ne 0 ]; then
   echo "Tests are failing. If this is the planned red step of test-first, say so. Otherwise fix the code, not the tests." >&2
   echo "$out" | tail -40 >&2
   exit 2
