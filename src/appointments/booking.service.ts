@@ -1,9 +1,51 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Clock } from '../scheduling/index.js';
+import { checkBookingTime, type Clock, type TimeRange } from '../scheduling/index.js';
 import type { BookingConfig } from './booking.config.js';
-import type { BookingStore } from './booking.store.js';
+import type { BookingAttempt, BookingLookup, BookingStore } from './booking.store.js';
 import { BOOKING_CONFIG, BOOKING_STORE, CLOCK } from './booking.tokens.js';
-import type { BookingRequest, BookingResult } from './booking.types.js';
+import type {
+  BookingErrorCode,
+  BookingRequest,
+  BookingResult,
+  ContendedReason,
+} from './booking.types.js';
+
+// Fixed by the SPEC (A9, A10), not config.
+const STEP_MINUTES = 15;
+const HORIZON_DAYS = 90;
+
+// Database errors that say nothing about free slots (ADR 001 decision 6).
+// Deadlock, serialization failure and lock timeout get retried, up to
+// TRANSIENT_RETRIES times per request in total. The next one after that is a
+// 503. With ON CONFLICT DO NOTHING at READ COMMITTED none of them showed up in
+// the experiments, so this is a backstop and not the normal path.
+const TRANSIENT_CODES = new Set(['40P01', '40001', '55P03']);
+const TRANSIENT_RETRIES = 3;
+// A statement timeout means the database is overloaded. Retrying would only
+// add to the load, so it goes straight to a 503.
+const STATEMENT_TIMEOUT = '57014';
+
+// Everything one attempt needs, worked out once before the loop.
+interface LoopInput {
+  request: BookingRequest;
+  serviceTypeId: string;
+  skillCode: string;
+  range: TimeRange;
+  preferredTechnicianId: string | null;
+}
+
+// Shared between attempts. The cap is taken from the very first read, even
+// if that attempt then fails with a database error.
+interface LoopState {
+  cap: number | null;
+}
+
+// An attempt either answers the request, or lost a race and the loop has to
+// go round again.
+type AttemptOutcome = { kind: 'answer'; result: BookingResult } | { kind: 'lost' };
+
+const rejected = (code: BookingErrorCode): BookingResult => ({ kind: 'rejected', code });
+const contended = (reason: ContendedReason): BookingResult => ({ kind: 'contended', reason });
 
 // Books one appointment: the lookups, the 404s and 422s, then the loop from
 // ADR 001. Nest injects the dependencies in the app, a unit test just calls
@@ -16,7 +58,201 @@ export class BookingService {
     @Inject(BOOKING_CONFIG) private readonly config: BookingConfig,
   ) {}
 
-  book(_request: BookingRequest): Promise<BookingResult> {
-    return Promise.reject(new Error('not implemented'));
+  async book(request: BookingRequest): Promise<BookingResult> {
+    // Step 8 goes here: the idempotency key lookup. It has to come before
+    // every other check, so a replay still works after its start time has
+    // passed (ADR 001 decision 3).
+
+    const checked = checkLookup(request, await this.store.lookup(request));
+    if (!checked.ok) return rejected(checked.code);
+    const { dealership, serviceType } = checked;
+
+    // The time rules come last among the 422s (SPEC "Order of checks"), in
+    // the dealership's own zone and opening hours.
+    const time = checkBookingTime({
+      start: request.startTime,
+      durationMinutes: serviceType.durationMinutes,
+      timeZone: dealership.timeZone,
+      openingHours: dealership.openingHours,
+      now: this.clock.now(),
+      stepMinutes: STEP_MINUTES,
+      horizonDays: HORIZON_DAYS,
+    });
+    if (!time.ok) return rejected(time.code);
+
+    return this.loop({
+      request,
+      serviceTypeId: serviceType.id,
+      skillCode: serviceType.requiredSkillCode,
+      range: time.range,
+      preferredTechnicianId: request.preferredTechnicianId ?? null,
+    });
   }
+
+  // The loop from ADR 001 decisions 4 to 6. Each attempt is its own short
+  // transaction: read, then either answer or insert. Three separate limits
+  // keep it from running forever, and hitting any of them is a 503, never a
+  // 409, because only a fresh read is allowed to say "no slot":
+  // - the hard cap on attempts that lost a race (B + T + 2 from the first read)
+  // - the database error budget (TRANSIENT_RETRIES)
+  // - the time budget, which covers both of the above
+  private async loop(input: LoopInput): Promise<BookingResult> {
+    const startedAt = this.clock.now().getTime();
+    const state: LoopState = { cap: null };
+    let lostRaces = 0;
+    let transientErrors = 0;
+
+    for (;;) {
+      // Checked before every attempt, so a slow run stops instead of starting
+      // another round it has no time for.
+      if (this.clock.now().getTime() - startedAt >= this.config.loopBudgetMs) {
+        return contended('time_budget');
+      }
+      // Only lost races count here. A database error didn't show us anything
+      // about the slot, so it doesn't use up the cap (it has its own budget).
+      if (state.cap !== null && lostRaces >= state.cap) {
+        return contended('attempt_cap');
+      }
+
+      let outcome: AttemptOutcome;
+      try {
+        outcome = await this.store.runAttempt((attempt) => this.attempt(attempt, input, state));
+      } catch (error) {
+        const code = sqlState(error);
+        if (code === STATEMENT_TIMEOUT) return contended('statement_timeout');
+        if (code !== undefined && TRANSIENT_CODES.has(code)) {
+          transientErrors++;
+          if (transientErrors > TRANSIENT_RETRIES) return contended('db_retries_exhausted');
+          continue;
+        }
+        // Anything else is a bug or a real outage, not a booking answer.
+        throw error;
+      }
+
+      if (outcome.kind === 'answer') return outcome.result;
+      lostRaces++;
+    }
+  }
+
+  // One attempt, inside its transaction. The read answers in a fixed order
+  // (ADR 001 decision 4), and the order matters:
+  // 1. (step 8) is the idempotency key already booked? A twin request with
+  //    the same key may have just committed. This has to come first, or a
+  //    replay would see "its own" vehicle as busy and get a 409.
+  // 2. is the vehicle booked at an overlapping time anywhere?
+  // 3. is the preferred technician busy? No fallback to someone else (A5).
+  // 4. is there no free bay, or no free qualified technician?
+  // Otherwise insert the first free pair. Zero rows back means somebody got
+  // in first, and the next attempt's read works out what changed.
+  private async attempt(
+    attempt: BookingAttempt,
+    input: LoopInput,
+    state: LoopState,
+  ): Promise<AttemptOutcome> {
+    // Step 8 goes here: look the idempotency key up again, before the
+    // vehicle check below. Careful, at READ COMMITTED a separate statement
+    // run before the read can miss a twin that commits in between, which
+    // gives exactly the 409 this order is there to prevent. The key check
+    // has to see data at least as new as the vehicle check (see readSlot in
+    // booking.store.ts).
+
+    const { request, range, preferredTechnicianId } = input;
+    const read = await attempt.readSlot({
+      dealershipId: request.dealershipId,
+      vehicleId: request.vehicleId,
+      skillCode: input.skillCode,
+      range,
+      preferredTechnicianId,
+    });
+
+    // Every lost race proves a competitor committed a booking on that bay or
+    // technician, so the next read won't offer it again. A request can lose
+    // at most B + T - 1 races before it books or gets an honest 409, and the
+    // cap leaves a little room on top of that. With a preferred technician
+    // only that one person can be used, so T is 1.
+    if (state.cap === null) {
+      const technicians = preferredTechnicianId ? 1 : read.technicianIds.length;
+      state.cap = read.bayIds.length + technicians + 2;
+    }
+
+    if (read.vehicleBusy) return answer(rejected('VEHICLE_ALREADY_BOOKED'));
+    if (preferredTechnicianId && read.preferredTechnicianBusy) {
+      return answer(rejected('TECHNICIAN_UNAVAILABLE'));
+    }
+
+    // The lists are already in pick order: lowest bay id, and the technician
+    // with the fewest skills, then the lowest id (A16).
+    const bay = read.bayIds[0];
+    const technician = preferredTechnicianId ?? read.technicianIds[0];
+    if (bay === undefined || technician === undefined) {
+      return answer(rejected('SLOT_UNAVAILABLE'));
+    }
+
+    const appointment = await attempt.tryInsert({
+      dealershipId: request.dealershipId,
+      serviceTypeId: input.serviceTypeId,
+      customerId: request.customerId,
+      vehicleId: request.vehicleId,
+      serviceBayId: bay,
+      technicianId: technician,
+      range,
+    });
+    return appointment ? answer({ kind: 'created', appointment }) : { kind: 'lost' };
+  }
+}
+
+function answer(result: BookingResult): AttemptOutcome {
+  return { kind: 'answer', result };
+}
+
+type LookupCheck =
+  | { ok: false; code: BookingErrorCode }
+  | {
+      ok: true;
+      dealership: NonNullable<BookingLookup['dealership']>;
+      serviceType: NonNullable<BookingLookup['serviceType']>;
+    };
+
+// The 404s, then the 422s that don't need a time, in the SPEC "Order of
+// checks". The first one that fails decides the code.
+function checkLookup(request: BookingRequest, lookup: BookingLookup): LookupCheck {
+  const refuse = (code: BookingErrorCode): LookupCheck => ({ ok: false, code });
+  const { dealership, serviceType, vehicle, preferredTechnician } = lookup;
+  const wantsTechnician = request.preferredTechnicianId != null;
+
+  if (!dealership) return refuse('DEALERSHIP_NOT_FOUND');
+  if (!serviceType) return refuse('SERVICE_TYPE_NOT_FOUND');
+  if (!lookup.customerFound) return refuse('CUSTOMER_NOT_FOUND');
+  if (!vehicle) return refuse('VEHICLE_NOT_FOUND');
+  if (wantsTechnician && !preferredTechnician) return refuse('TECHNICIAN_NOT_FOUND');
+
+  // Ownership is checked here at booking time and not by the schema, because
+  // cars get sold (ADR 001).
+  if (vehicle.customerId !== request.customerId) return refuse('VEHICLE_NOT_OWNED_BY_CUSTOMER');
+
+  // The preferred technician has to work here and have the skill. Busy or
+  // not is the loop's question, this one can never work as asked.
+  if (
+    wantsTechnician &&
+    preferredTechnician &&
+    (preferredTechnician.dealershipId !== dealership.id ||
+      !preferredTechnician.skillCodes.includes(serviceType.requiredSkillCode))
+  ) {
+    return refuse('TECHNICIAN_NOT_ELIGIBLE');
+  }
+
+  // No bay at all, or nobody with the skill at all. Permanent, so a 422 and
+  // not a 409 (A20).
+  if (!lookup.offersService) return refuse('SERVICE_NOT_OFFERED');
+
+  return { ok: true, dealership, serviceType };
+}
+
+// pg errors carry the SQLSTATE in `code`, and Kysely passes them on as they are.
+function sqlState(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const { code } = error;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
 }
