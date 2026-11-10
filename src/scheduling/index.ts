@@ -9,3 +9,4 @@ export {
   checkBookingTime,
 } from './check-booking-time.js';
 export { type Clock, systemClock, FixedClock } from './clock.js';
+export { parseInstant } from './parse-instant.js';
